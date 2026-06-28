@@ -1,0 +1,266 @@
+// !$*UTF8*$!
+{
+	objectVersion = 77;
+	archiveVersion = 1;
+	classes = {
+	};
+	objects = {
+
+/* Begin PBXBuildFile section */
+		001 /* FinderBreadcrumbsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101; };
+		002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102; };
+		003 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103; };
+		004 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104; };
+		005 /* AccessibilityPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105; };
+		006 /* FinderAutomationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106; };
+		007 /* FinderWindowTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 107; };
+		008 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108; };
+		009 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109; };
+		00A /* PathBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A; };
+		00B /* PathBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		100 /* FinderBreadcrumbs.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FinderBreadcrumbs.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		101 /* FinderBreadcrumbsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderBreadcrumbsApp.swift; sourceTree = "<group>"; };
+		102 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		103 /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
+		104 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		105 /* AccessibilityPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityPermissionManager.swift; sourceTree = "<group>"; };
+		106 /* FinderAutomationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderAutomationService.swift; sourceTree = "<group>"; };
+		107 /* FinderWindowTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderWindowTracker.swift; sourceTree = "<group>"; };
+		108 /* HotKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyManager.swift; sourceTree = "<group>"; };
+		109 /* OverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowController.swift; sourceTree = "<group>"; };
+		10A /* PathBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathBarView.swift; sourceTree = "<group>"; };
+		10B /* PathBarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathBarViewModel.swift; sourceTree = "<group>"; };
+		10C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		10D /* default-config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = default-config.json; sourceTree = "<group>"; };
+		10E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		200 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		300 = {
+			isa = PBXGroup;
+			children = (
+				301,
+				302,
+				303,
+				100,
+			);
+			sourceTree = "<group>";
+		};
+		301 = {
+			isa = PBXGroup;
+			children = (
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				10A,
+				10B,
+				10C,
+			);
+			path = FinderBreadcrumbs;
+			sourceTree = "<group>";
+		};
+		302 = {
+			isa = PBXGroup;
+			children = (
+				10D,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		303 = {
+			isa = PBXGroup;
+			children = (
+				10E,
+			);
+			path = "";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		400 /* FinderBreadcrumbs */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 700;
+			buildPhases = (
+				500,
+				200,
+				501,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FinderBreadcrumbs;
+			productName = FinderBreadcrumbs;
+			productReference = 100;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		600 = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					400 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = 701;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 300;
+			productRefGroup = 300;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				400,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		501 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		500 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				001,
+				002,
+				003,
+				004,
+				005,
+				006,
+				007,
+				008,
+				009,
+				00A,
+				00B,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		800 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FinderBreadcrumbs/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.orlando.FinderBreadcrumbs;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		801 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FinderBreadcrumbs/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.orlando.FinderBreadcrumbs;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		802 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+			};
+			name = Debug;
+		};
+		803 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		700 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				800,
+				801,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		701 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				802,
+				803,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 600;
+}
