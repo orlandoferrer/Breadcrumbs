@@ -19,7 +19,11 @@ struct PathBarView: View {
                 HStack(spacing: 9) {
                     Image(systemName: "folder")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                        .foregroundStyle(
+                            viewModel.isEditing
+                                ? Color.accentColor
+                                : Color(nsColor: .secondaryLabelColor)
+                        )
                         .frame(width: 14)
 
                     Group {
@@ -31,6 +35,17 @@ struct PathBarView: View {
                                 onTabComplete: { viewModel.applyUnambiguousCompletion() }
                             )
                             .frame(minWidth: 260)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color.accentColor.opacity(0.12))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 1)
+                            )
+                            .shadow(color: Color.accentColor.opacity(0.14), radius: 5, x: 0, y: 1)
                         } else {
                             ReadOnlyPathContent(viewModel: viewModel)
                                 .contentShape(Rectangle())
@@ -128,7 +143,7 @@ private struct PathEditorField: NSViewRepresentable {
         field.backgroundColor = .clear
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 12.5, weight: .regular)
-        field.textColor = .labelColor
+        field.textColor = .controlTextColor
         field.delegate = context.coordinator
         context.coordinator.configureHandlers(
             onCommit: onCommit,
@@ -181,6 +196,7 @@ private struct PathEditorField: NSViewRepresentable {
             field.didScheduleInitialFocus = true
             Task { @MainActor [weak field] in
                 guard let field else { return }
+                await Task.yield()
                 guard let window = field.window else {
                     field.didScheduleInitialFocus = false
                     return
@@ -190,7 +206,7 @@ private struct PathEditorField: NSViewRepresentable {
                 if let editor = window.fieldEditor(true, for: field) as? NSTextView {
                     editor.insertionPointColor = .labelColor
                     editor.drawsBackground = false
-                    editor.selectedRange = NSRange(location: field.stringValue.count, length: 0)
+                    editor.selectedRange = NSRange(location: (field.stringValue as NSString).length, length: 0)
                 }
             }
         }

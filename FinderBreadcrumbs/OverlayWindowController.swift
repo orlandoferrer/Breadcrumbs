@@ -7,6 +7,7 @@ final class OverlayWindowController {
     private let viewModel: PathBarViewModel
     private let panelLevel = NSWindow.Level.statusBar
     private var visibilityHoldUntil: Date?
+    private var outsideClickMonitor: Any?
 
     init(viewModel: PathBarViewModel) {
         self.viewModel = viewModel
@@ -30,6 +31,10 @@ final class OverlayWindowController {
         panel.isMovable = false
         panel.ignoresMouseEvents = false
         panel.becomesKeyOnlyIfNeeded = true
+        panel.onResignKey = { [weak viewModel] in
+            guard viewModel?.isEditing == true else { return }
+            viewModel?.cancelEditing(returnFocusToFinder: false)
+        }
 
         self.panel = panel
         panel.contentView = NSHostingView(rootView: makeRootView())
@@ -43,13 +48,14 @@ final class OverlayWindowController {
 
     func hide() {
         visibilityHoldUntil = nil
+        removeOutsideClickMonitor()
         panel.orderOut(nil)
     }
 
     var shouldHoldVisibility: Bool {
         guard panel.isVisible else { return false }
         if panel.isKeyWindow {
-            return true
+            return viewModel.isEditing
         }
         guard let visibilityHoldUntil else { return false }
         return visibilityHoldUntil > Date()
@@ -64,11 +70,33 @@ final class OverlayWindowController {
             visibilityHoldUntil = nil
             return
         }
+        installOutsideClickMonitor()
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }
 
     func endEditing() {
         visibilityHoldUntil = nil
+        removeOutsideClickMonitor()
+    }
+
+    private func installOutsideClickMonitor() {
+        removeOutsideClickMonitor()
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak viewModel] _ in
+            Task { @MainActor in
+                guard viewModel?.isEditing == true else { return }
+                viewModel?.cancelEditing(returnFocusToFinder: false)
+            }
+        }
+    }
+
+    private func removeOutsideClickMonitor() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+            self.outsideClickMonitor = nil
+        }
     }
 
     private func frame(for finderFrame: CGRect, config: AppConfig) -> NSRect {
@@ -115,6 +143,13 @@ final class OverlayWindowController {
 }
 
 private final class FocusablePanel: NSPanel {
+    var onResignKey: (() -> Void)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func resignKey() {
+        super.resignKey()
+        onResignKey?()
+    }
 }

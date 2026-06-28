@@ -22,12 +22,14 @@ final class AppCoordinator {
     func start() {
         AccessibilityPermissionManager.ensurePrompted()
 
-        viewModel.onEditingEnded = {
+        viewModel.onEditingEnded = { shouldReturnFocusToFinder in
             self.overlayController.endEditing()
-            NSRunningApplication
-                .runningApplications(withBundleIdentifier: "com.apple.finder")
-                .first?
-                .activate()
+            if shouldReturnFocusToFinder {
+                NSRunningApplication
+                    .runningApplications(withBundleIdentifier: "com.apple.finder")
+                    .first?
+                    .activate()
+            }
         }
 
         hotKeyManager.onActivate = { [weak self] in

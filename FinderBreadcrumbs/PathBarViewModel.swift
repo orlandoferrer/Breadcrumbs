@@ -14,7 +14,7 @@ final class PathBarViewModel: ObservableObject {
     @Published var displayMode: AppConfig.DisplayMode
     @Published var status: Status = .unavailable("Waiting for Finder")
 
-    var onEditingEnded: (() -> Void)?
+    var onEditingEnded: ((Bool) -> Void)?
 
     private let automationService: FinderAutomationServing
     private(set) var currentState: FinderState?
@@ -58,12 +58,12 @@ final class PathBarViewModel: ObservableObject {
         return true
     }
 
-    func cancelEditing() {
+    func cancelEditing(returnFocusToFinder: Bool = true) {
         isEditing = false
         if let currentState {
             editingText = currentState.resolvedPath
         }
-        onEditingEnded?()
+        onEditingEnded?(returnFocusToFinder)
     }
 
     func commitEditing() {
@@ -86,7 +86,7 @@ final class PathBarViewModel: ObservableObject {
                 self.currentState = currentState
                 displayedText = formatDisplayText(for: currentState)
             }
-            onEditingEnded?()
+            onEditingEnded?(true)
         }
     }
 
