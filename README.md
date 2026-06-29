@@ -34,6 +34,28 @@ The app writes its config to:
 
 You can start from the sample file at [Config/default-config.json](/Users/orlando/Documents/BreadCrumbs/Config/default-config.json).
 
+The shortcut can be configured with a readable string:
+
+```json
+"shortcut": "cmd+option+l"
+```
+
+Supported modifiers are `cmd`, `option`, `shift`, and `control`. Common keys
+include letters, numbers, `space`, `tab`, `return`, `escape`, `delete`, and
+arrow keys like `left` or `right`. The older numeric `{ "keyCode": ..., "modifiers": ... }`
+format still works for existing configs.
+
+To inspect Finder child-window behavior, temporarily enable:
+
+```json
+"debugLogFinderWindowDiagnostics": true
+```
+
+Then reproduce the issue and look for `FinderBreadcrumbs Finder window diagnostics`
+messages in the Xcode console. The logs include CoreGraphics window data,
+Accessibility role/subrole/title/document/frame data, and the Finder automation
+state so child windows can be classified from observed behavior.
+
 To bootstrap that config on a new Mac, run:
 
 ```bash

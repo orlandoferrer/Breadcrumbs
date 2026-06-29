@@ -1,5 +1,6 @@
 {
   "activePollInterval" : 0.12,
+  "debugLogFinderWindowDiagnostics" : false,
   "displayMode" : "text",
   "horizontalInset" : 8,
   "inactivePollInterval" : 1.5,
@@ -7,10 +8,7 @@
   "motionPollInterval" : 0.016,
   "motionTrackingDuration" : 0.2,
   "preferredBarHeight" : 34,
-  "shortcut" : {
-    "keyCode" : 37,
-    "modifiers" : 2560
-  },
+  "shortcut" : "cmd+option+l",
   "trackOnlyFrontmostFinderWindow" : true,
   "verticalGap" : -6
 }

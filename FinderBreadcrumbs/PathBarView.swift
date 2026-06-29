@@ -48,10 +48,6 @@ struct PathBarView: View {
                             .shadow(color: Color.accentColor.opacity(0.14), radius: 5, x: 0, y: 1)
                         } else {
                             ReadOnlyPathContent(viewModel: viewModel)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    onActivateEditing()
-                                }
                         }
                     }
                 }
@@ -64,6 +60,12 @@ struct PathBarView: View {
             .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !viewModel.isEditing {
+                onActivateEditing()
+            }
+        }
         .padding(.horizontal, 1)
         .padding(.vertical, 1)
     }

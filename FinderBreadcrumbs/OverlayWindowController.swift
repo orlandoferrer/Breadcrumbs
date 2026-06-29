@@ -84,8 +84,11 @@ final class OverlayWindowController {
         removeOutsideClickMonitor()
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        ) { [weak viewModel] _ in
+        ) { [weak panel, weak viewModel] _ in
             Task { @MainActor in
+                if let panel, panel.frame.contains(NSEvent.mouseLocation) {
+                    return
+                }
                 guard viewModel?.isEditing == true else { return }
                 viewModel?.cancelEditing(returnFocusToFinder: false)
             }

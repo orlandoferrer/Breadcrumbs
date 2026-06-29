@@ -24,6 +24,7 @@ final class FinderWindowTracker {
     private var observedAppElement: AXUIElement?
     private var observedWindowElement: AXUIElement?
     private var pendingBurstRefreshes: [DispatchWorkItem] = []
+    private var lastDiagnosticSignature: String?
 
     init(config: AppConfig, automationService: FinderAutomationServing) {
         self.config = config
@@ -56,6 +57,7 @@ final class FinderWindowTracker {
 
         guard finderIsFrontmost else {
             motionTrackingDeadline = nil
+            lastDiagnosticSignature = nil
             if shouldRemainVisible?() == true {
                 return
             }
@@ -66,9 +68,16 @@ final class FinderWindowTracker {
             return
         }
 
+        logFinderWindowDiagnostics(reason: "poll")
+
         guard let snapshot = captureSnapshot() else {
-            // Finder can briefly stop reporting a target while changing tabs.
-            // Keep the current overlay visible until we get the next stable snapshot.
+            if shouldRemainVisible?() == true {
+                return
+            }
+            if lastSnapshot != nil {
+                lastSnapshot = nil
+                onUpdate?(nil)
+            }
             return
         }
 
@@ -134,14 +143,28 @@ final class FinderWindowTracker {
             return nil
         }
 
-        guard let frame = frontmostWindowFrame(for: finderPID) else {
+        guard let windowInfo = frontmostWindowInfo(for: finderPID) else {
             return nil
         }
 
-        return FinderWindowSnapshot(frame: frame, state: automationService.currentState())
+        if let state = automationService.currentState() {
+            guard windowInfo.number == nil || windowInfo.number == state.windowID else {
+                return nil
+            }
+
+            return FinderWindowSnapshot(frame: windowInfo.frame, state: state)
+        }
+
+        if let lastSnapshot,
+           let windowNumber = windowInfo.number,
+           windowNumber == lastSnapshot.state?.windowID {
+            return FinderWindowSnapshot(frame: windowInfo.frame, state: lastSnapshot.state)
+        }
+
+        return nil
     }
 
-    private func frontmostWindowFrame(for processID: pid_t) -> CGRect? {
+    private func frontmostWindowInfo(for processID: pid_t) -> FinderCGWindowInfo? {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return nil
@@ -161,7 +184,9 @@ final class FinderWindowTracker {
                 continue
             }
 
-            return frame
+            let title = windowInfo[kCGWindowName as String] as? String
+            let number = windowInfo[kCGWindowNumber as String] as? Int
+            return FinderCGWindowInfo(number: number, title: title, layer: layer, alpha: alpha, frame: frame)
         }
 
         return nil
@@ -289,11 +314,13 @@ final class FinderWindowTracker {
         case kAXFocusedWindowChangedNotification,
              kAXMainWindowChangedNotification:
             attachToFocusedWindow()
+            logFinderWindowDiagnostics(reason: notification)
             refreshNow()
             scheduleBurstRefreshes()
         case kAXMovedNotification,
              kAXResizedNotification:
             motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
+            logFinderWindowDiagnostics(reason: notification)
             refreshNow()
             scheduleBurstRefreshes()
         default:
@@ -317,6 +344,154 @@ final class FinderWindowTracker {
     private func cancelBurstRefreshes() {
         pendingBurstRefreshes.forEach { $0.cancel() }
         pendingBurstRefreshes.removeAll()
+    }
+
+    private func logFinderWindowDiagnostics(reason: String) {
+        guard config.debugLogFinderWindowDiagnostics else { return }
+        guard let finderPID = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.finder")
+            .first?
+            .processIdentifier else {
+            return
+        }
+
+        let cgInfo = frontmostWindowInfo(for: finderPID)
+        let axInfo = focusedWindowDiagnostics(for: finderPID)
+        let state = automationService.currentState()
+        let signature = [
+            cgInfo?.signature ?? "cg:nil",
+            axInfo?.signature ?? "ax:nil",
+            state.map { "state:\($0.windowID):\($0.resolvedPath)" } ?? "state:nil"
+        ].joined(separator: "|")
+
+        guard signature != lastDiagnosticSignature else { return }
+        lastDiagnosticSignature = signature
+
+        NSLog(
+            """
+            FinderBreadcrumbs Finder window diagnostics [%@]
+              CG: %@
+              AX: %@
+              FinderState: %@
+            """,
+            reason,
+            cgInfo?.logDescription ?? "nil",
+            axInfo?.logDescription ?? "nil",
+            state.map { "windowID=\($0.windowID) displayedPath=\($0.displayedPath) resolvedPath=\($0.resolvedPath)" } ?? "nil"
+        )
+    }
+
+    private func focusedWindowDiagnostics(for finderPID: pid_t) -> FinderAXWindowInfo? {
+        let appElement = observedAppElement ?? AXUIElementCreateApplication(finderPID)
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedWindowAttribute as CFString,
+            &value
+        )
+
+        guard result == .success,
+              let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return FinderAXWindowInfo(
+                role: nil,
+                subrole: nil,
+                title: nil,
+                document: nil,
+                frame: nil,
+                copyResult: result
+            )
+        }
+
+        let windowElement = unsafeDowncast(value as AnyObject, to: AXUIElement.self)
+        return FinderAXWindowInfo(
+            role: stringAttribute(kAXRoleAttribute, from: windowElement),
+            subrole: stringAttribute(kAXSubroleAttribute, from: windowElement),
+            title: stringAttribute(kAXTitleAttribute, from: windowElement),
+            document: stringAttribute(kAXDocumentAttribute, from: windowElement),
+            frame: axFrame(for: windowElement),
+            copyResult: result
+        )
+    }
+
+    private func stringAttribute(_ attribute: String, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value else {
+            return nil
+        }
+        return String(describing: value)
+    }
+
+    private func axFrame(for element: AXUIElement) -> CGRect? {
+        guard let position = cgPointAttribute(kAXPositionAttribute, from: element),
+              let size = cgSizeAttribute(kAXSizeAttribute, from: element) else {
+            return nil
+        }
+        return CGRect(origin: position, size: size)
+    }
+
+    private func cgPointAttribute(_ attribute: String, from element: AXUIElement) -> CGPoint? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var point = CGPoint.zero
+        guard AXValueGetValue(value as! AXValue, .cgPoint, &point) else {
+            return nil
+        }
+        return point
+    }
+
+    private func cgSizeAttribute(_ attribute: String, from element: AXUIElement) -> CGSize? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var size = CGSize.zero
+        guard AXValueGetValue(value as! AXValue, .cgSize, &size) else {
+            return nil
+        }
+        return size
+    }
+}
+
+private struct FinderCGWindowInfo {
+    var number: Int?
+    var title: String?
+    var layer: Int
+    var alpha: Double
+    var frame: CGRect
+
+    var signature: String {
+        "cg:\(number ?? -1):\(title ?? ""):\(frame.debugDescription)"
+    }
+
+    var logDescription: String {
+        "number=\(number.map(String.init) ?? "nil") title=\(title ?? "nil") layer=\(layer) alpha=\(alpha) frame=\(frame.debugDescription)"
+    }
+}
+
+private struct FinderAXWindowInfo {
+    var role: String?
+    var subrole: String?
+    var title: String?
+    var document: String?
+    var frame: CGRect?
+    var copyResult: AXError
+
+    var signature: String {
+        "ax:\(role ?? ""):\(subrole ?? ""):\(title ?? ""):\(document ?? ""):\(frame?.debugDescription ?? ""):\(copyResult.rawValue)"
+    }
+
+    var logDescription: String {
+        "result=\(copyResult.rawValue) role=\(role ?? "nil") subrole=\(subrole ?? "nil") title=\(title ?? "nil") document=\(document ?? "nil") frame=\(frame?.debugDescription ?? "nil")"
     }
 }
 
