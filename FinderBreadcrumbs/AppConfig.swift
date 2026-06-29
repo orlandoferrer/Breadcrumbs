@@ -290,7 +290,7 @@ struct AppConfig: Codable {
         trackOnlyFrontmostFinderWindow: true,
         activePollInterval: 0.12,
         motionPollInterval: 0.016,
-        motionTrackingDuration: 0.2,
+        motionTrackingDuration: 0.75,
         inactivePollInterval: 1.5,
         horizontalInset: 8,
         verticalGap: -6,

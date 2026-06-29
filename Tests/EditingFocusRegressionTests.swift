@@ -106,7 +106,7 @@ struct EditingFocusRegressionTests {
               "inactivePollInterval": 1.5,
               "launchAtLogin": false,
               "motionPollInterval": 0.016,
-              "motionTrackingDuration": 0.2,
+              "motionTrackingDuration": 0.75,
               "preferredBarHeight": 34,
               "shortcut": "cmd+option+l",
               "trackOnlyFrontmostFinderWindow": true,

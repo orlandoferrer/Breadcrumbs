@@ -25,6 +25,9 @@ final class FinderWindowTracker {
     private var observedWindowElement: AXUIElement?
     private var pendingBurstRefreshes: [DispatchWorkItem] = []
     private var lastDiagnosticSignature: String?
+    private var missingSnapshotGraceUntil: Date?
+    private var lastCaptureWasKnownChildWindow = false
+    private let missingSnapshotGraceDuration: TimeInterval = 0.25
 
     init(config: AppConfig, automationService: FinderAutomationServing) {
         self.config = config
@@ -58,6 +61,8 @@ final class FinderWindowTracker {
         guard finderIsFrontmost else {
             motionTrackingDeadline = nil
             lastDiagnosticSignature = nil
+            missingSnapshotGraceUntil = nil
+            lastCaptureWasKnownChildWindow = false
             if shouldRemainVisible?() == true {
                 return
             }
@@ -72,15 +77,22 @@ final class FinderWindowTracker {
 
         guard let snapshot = captureSnapshot() else {
             if shouldRemainVisible?() == true {
+                missingSnapshotGraceUntil = nil
+                return
+            }
+            if shouldKeepLastSnapshotDuringTransientMiss() {
                 return
             }
             if lastSnapshot != nil {
                 lastSnapshot = nil
                 onUpdate?(nil)
             }
+            missingSnapshotGraceUntil = nil
             return
         }
 
+        missingSnapshotGraceUntil = nil
+        lastCaptureWasKnownChildWindow = false
         if snapshot != lastSnapshot {
             if let lastSnapshot, snapshot.frame != lastSnapshot.frame {
                 motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
@@ -135,7 +147,23 @@ final class FinderWindowTracker {
         return min(0.02, interval * 0.25)
     }
 
+    private func shouldKeepLastSnapshotDuringTransientMiss() -> Bool {
+        guard lastSnapshot != nil, !lastCaptureWasKnownChildWindow else {
+            missingSnapshotGraceUntil = nil
+            return false
+        }
+
+        let now = Date()
+        if let missingSnapshotGraceUntil {
+            return missingSnapshotGraceUntil > now
+        }
+
+        missingSnapshotGraceUntil = now.addingTimeInterval(missingSnapshotGraceDuration)
+        return true
+    }
+
     private func captureSnapshot() -> FinderWindowSnapshot? {
+        lastCaptureWasKnownChildWindow = false
         guard let finderPID = NSRunningApplication
             .runningApplications(withBundleIdentifier: "com.apple.finder")
             .first?
@@ -149,6 +177,7 @@ final class FinderWindowTracker {
 
         if let state = automationService.currentState() {
             guard windowInfo.number == nil || windowInfo.number == state.windowID else {
+                lastCaptureWasKnownChildWindow = true
                 return nil
             }
 
@@ -161,6 +190,9 @@ final class FinderWindowTracker {
             return FinderWindowSnapshot(frame: windowInfo.frame, state: lastSnapshot.state)
         }
 
+        if windowInfo.number != nil {
+            lastCaptureWasKnownChildWindow = true
+        }
         return nil
     }
 
