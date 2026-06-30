@@ -37,6 +37,10 @@ final class OverlayWindowController {
         }
 
         self.panel = panel
+        panel.onMouseDown = { [weak self] in
+            guard let self, !self.viewModel.isEditing else { return }
+            self.beginEditing()
+        }
         panel.contentView = NSHostingView(rootView: makeRootView())
     }
 
@@ -52,27 +56,36 @@ final class OverlayWindowController {
         panel.orderOut(nil)
     }
 
+    func cancelEditingAndHide(returnFocusToFinder: Bool = false) {
+        if viewModel.isEditing {
+            viewModel.cancelEditing(returnFocusToFinder: returnFocusToFinder)
+        }
+        hide()
+    }
+
     var shouldHoldVisibility: Bool {
         guard panel.isVisible else { return false }
         if panel.isKeyWindow {
             return viewModel.isEditing
         }
         guard let visibilityHoldUntil else { return false }
-        return visibilityHoldUntil > Date()
+        return viewModel.isEditing && visibilityHoldUntil > Date()
     }
 
-    func beginEditing() {
+    @discardableResult
+    func beginEditing() -> Bool {
         if !panel.isVisible {
             panel.orderFrontRegardless()
         }
         visibilityHoldUntil = Date().addingTimeInterval(0.6)
         guard viewModel.beginEditing() else {
             visibilityHoldUntil = nil
-            return
+            return false
         }
         installOutsideClickMonitor()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        return true
     }
 
     func endEditing() {
@@ -147,9 +160,17 @@ final class OverlayWindowController {
 
 private final class FocusablePanel: NSPanel {
     var onResignKey: (() -> Void)?
+    var onMouseDown: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown {
+            onMouseDown?()
+        }
+        super.sendEvent(event)
+    }
 
     override func resignKey() {
         super.resignKey()

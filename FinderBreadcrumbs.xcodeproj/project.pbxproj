@@ -18,6 +18,9 @@
 		009 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109; };
 		00A /* PathBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A; };
 		00B /* PathBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B; };
+		00C /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F; };
+		00D /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110; };
+		00E /* StatusMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +39,9 @@
 		10C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		10D /* default-config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = default-config.json; sourceTree = "<group>"; };
 		10E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		10F /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemManager.swift; sourceTree = "<group>"; };
+		110 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
+		111 /* StatusMenuController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenuController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,9 +76,12 @@
 				106,
 				107,
 				108,
+				10F,
 				109,
 				10A,
 				10B,
+				110,
+				111,
 				10C,
 			);
 			path = FinderBreadcrumbs;
@@ -173,6 +182,9 @@
 				009,
 				00A,
 				00B,
+				00C,
+				00D,
+				00E,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

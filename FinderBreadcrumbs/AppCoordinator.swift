@@ -3,12 +3,13 @@ import Foundation
 
 @MainActor
 final class AppCoordinator {
-    private let config: AppConfig
+    private var config: AppConfig
     private let automationService: FinderAutomationServing
     private let tracker: FinderWindowTracker
     private let viewModel: PathBarViewModel
     private let overlayController: OverlayWindowController
     private let hotKeyManager = HotKeyManager()
+    private let settingsWindowController = SettingsWindowController()
     private var workspaceObserver: NSObjectProtocol?
 
     init(config: AppConfig = AppConfigLoader.load(), automationService: FinderAutomationServing = FinderAutomationService()) {
@@ -35,7 +36,7 @@ final class AppCoordinator {
         hotKeyManager.onActivate = { [weak self] in
             guard let self else { return }
             guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else { return }
-            self.overlayController.beginEditing()
+            self.beginEditingFromHotKey()
         }
         hotKeyManager.register(shortcut: config.shortcut)
         tracker.shouldRemainVisible = { [weak self] in
@@ -76,6 +77,36 @@ final class AppCoordinator {
         hotKeyManager.unregister()
     }
 
+    func showSettings() {
+        let draft = AppSettingsDraft(
+            launchAtLogin: LoginItemManager.isEnabled,
+            shortcut: config.shortcut,
+            displayMode: config.displayMode
+        )
+
+        settingsWindowController.show(
+            draft: draft,
+            onSave: { [weak self] draft in
+                self?.applySettings(draft)
+            },
+            onCancel: {}
+        )
+    }
+
+    private func beginEditingFromHotKey() {
+        tracker.refreshNow()
+        if overlayController.beginEditing() {
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else { return }
+            self.tracker.refreshNow()
+            _ = self.overlayController.beginEditing()
+        }
+    }
+
     private func handleActivatedApplicationChange() {
         let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let isFinderFrontmost = frontmostBundleID == "com.apple.finder"
@@ -86,10 +117,41 @@ final class AppCoordinator {
             return
         }
 
-        guard !isFinderFrontmost, !isEditingHere, !overlayController.shouldHoldVisibility else {
+        guard !isEditingHere else {
             return
         }
 
-        overlayController.hide()
+        overlayController.cancelEditingAndHide(returnFocusToFinder: false)
+    }
+
+    private func applySettings(_ draft: AppSettingsDraft) -> String? {
+        do {
+            try LoginItemManager.setEnabled(draft.launchAtLogin)
+        } catch {
+            return "Could not update Enable at login: \(error.localizedDescription)"
+        }
+
+        var updatedConfig = config
+        updatedConfig.launchAtLogin = draft.launchAtLogin
+        updatedConfig.shortcut = draft.shortcut
+        updatedConfig.displayMode = draft.displayMode
+
+        do {
+            try AppConfigLoader.save(updatedConfig)
+        } catch {
+            return "Could not save settings: \(error.localizedDescription)"
+        }
+
+        config = updatedConfig
+        hotKeyManager.register(shortcut: updatedConfig.shortcut)
+
+        if let currentState = viewModel.currentState {
+            viewModel.update(state: currentState, displayMode: updatedConfig.displayMode)
+        } else {
+            viewModel.displayMode = updatedConfig.displayMode
+        }
+
+        tracker.refreshNow()
+        return nil
     }
 }

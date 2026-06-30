@@ -327,6 +327,14 @@ enum AppConfigLoader {
             .appendingPathComponent(configFileName)
     }
 
+    static func save(_ config: AppConfig, fileManager: FileManager = .default) throws {
+        let url = configURL(fileManager: fileManager)
+        let parent = url.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        let data = try JSONEncoder.pretty.encode(config)
+        try data.write(to: url, options: .atomic)
+    }
+
     private static func createDefaultConfigIfNeeded(at url: URL, fileManager: FileManager) {
         let parent = url.deletingLastPathComponent()
         guard !fileManager.fileExists(atPath: url.path) else { return }
