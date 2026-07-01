@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 
 struct FinderState: Equatable {
@@ -9,9 +10,29 @@ struct FinderState: Equatable {
 protocol FinderAutomationServing {
     func currentState() -> FinderState?
     func navigate(to path: String, windowID: Int?) -> Bool
+    func hasAutomationPermission() -> Bool
+    func requestAutomationPermission() -> Bool
 }
 
 final class FinderAutomationService: FinderAutomationServing {
+    func hasAutomationPermission() -> Bool {
+        let targetDescriptor = NSAppleEventDescriptor(bundleIdentifier: "com.apple.finder")
+        guard let target = targetDescriptor.aeDesc else {
+            return false
+        }
+
+        return AEDeterminePermissionToAutomateTarget(
+            target,
+            AEEventClass(typeWildCard),
+            AEEventID(typeWildCard),
+            false
+        ) == noErr
+    }
+
+    func requestAutomationPermission() -> Bool {
+        run(script: #"tell application "Finder" to return name of startup disk"#, logErrors: false) != nil
+    }
+
     func currentState() -> FinderState? {
         let script = """
         tell application "Finder"

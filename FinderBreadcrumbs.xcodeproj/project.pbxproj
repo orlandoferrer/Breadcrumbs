@@ -21,6 +21,7 @@
 		00C /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F; };
 		00D /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110; };
 		00E /* StatusMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111; };
+		00F /* PermissionsOnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +43,7 @@
 		10F /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemManager.swift; sourceTree = "<group>"; };
 		110 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		111 /* StatusMenuController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenuController.swift; sourceTree = "<group>"; };
+		112 /* PermissionsOnboardingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsOnboardingWindowController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -80,6 +82,7 @@
 				109,
 				10A,
 				10B,
+				112,
 				110,
 				111,
 				10C,
@@ -185,6 +188,7 @@
 				00C,
 				00D,
 				00E,
+				00F,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

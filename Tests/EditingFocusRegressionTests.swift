@@ -146,4 +146,12 @@ private final class MockFinderAutomationService: FinderAutomationServing {
     func navigate(to path: String, windowID: Int?) -> Bool {
         true
     }
+
+    func hasAutomationPermission() -> Bool {
+        true
+    }
+
+    func requestAutomationPermission() -> Bool {
+        true
+    }
 }
