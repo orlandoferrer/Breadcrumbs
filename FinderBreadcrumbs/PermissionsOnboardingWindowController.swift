@@ -110,7 +110,8 @@ private struct PermissionsOnboardingView: View {
                 title: "Accessibility",
                 detail: "Lets Breadcrumbs find the active Finder window and place the path bar in the right spot.",
                 isGranted: status.accessibilityGranted,
-                buttonTitle: "Open Accessibility Settings"
+                buttonTitle: "Open Accessibility Settings",
+                recoveryHint: "If this still says Needed after you turn it on, quit and reopen Breadcrumbs. If it still does not work, remove \(AccessibilityPermissionManager.appName) from Accessibility settings and add it again."
             ) {
                 onOpenAccessibility()
                 status = onCheckAgain()
@@ -153,6 +154,7 @@ private struct PermissionRow: View {
     let detail: String
     let isGranted: Bool
     let buttonTitle: String
+    var recoveryHint: String?
     let action: () -> Void
 
     var body: some View {
@@ -175,6 +177,13 @@ private struct PermissionRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let recoveryHint, !isGranted {
+                    Text(recoveryHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Button(buttonTitle, action: action)
                     .disabled(isGranted)

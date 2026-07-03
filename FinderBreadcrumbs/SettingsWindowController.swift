@@ -123,45 +123,76 @@ private struct SettingsView: View {
 private struct ShortcutRecorderField: NSViewRepresentable {
     @Binding var shortcut: AppConfig.Shortcut
 
-    func makeNSView(context: Context) -> ShortcutRecorderTextField {
-        let field = ShortcutRecorderTextField()
-        field.onShortcut = { shortcut in
+    func makeNSView(context: Context) -> ShortcutRecorderView {
+        let view = ShortcutRecorderView()
+        view.onShortcut = { shortcut in
             self.shortcut = shortcut
         }
-        return field
+        return view
     }
 
-    func updateNSView(_ nsView: ShortcutRecorderTextField, context: Context) {
-        nsView.stringValue = shortcut.description
+    func updateNSView(_ nsView: ShortcutRecorderView, context: Context) {
+        nsView.shortcutDescription = shortcut.description
         nsView.onShortcut = { shortcut in
             self.shortcut = shortcut
         }
     }
 }
 
-private final class ShortcutRecorderTextField: NSTextField {
+private final class ShortcutRecorderView: NSView {
     var onShortcut: ((AppConfig.Shortcut) -> Void)?
+    var shortcutDescription: String = "" {
+        didSet {
+            guard !isRecording else { return }
+            label.stringValue = shortcutDescription
+        }
+    }
+
+    private let label = NSTextField(labelWithString: "")
+    private var isRecording = false {
+        didSet {
+            label.stringValue = isRecording ? "Press shortcut" : shortcutDescription
+            needsDisplay = true
+        }
+    }
 
     override var acceptsFirstResponder: Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        isEditable = false
-        isSelectable = false
-        isBezeled = true
-        bezelStyle = .roundedBezel
-        alignment = .center
-        focusRingType = .default
-        font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        placeholderString = "Record shortcut"
+        wantsLayer = true
+
+        label.alignment = .center
+        label.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingMiddle
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
     }
 
     required init?(coder: NSCoder) {
-        super.init(coder: coder)
+        fatalError("init(coder:) has not been implemented")
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        isRecording = true
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        isRecording = true
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        isRecording = false
+        return true
     }
 
     override func keyDown(with event: NSEvent) {
@@ -173,6 +204,26 @@ private final class ShortcutRecorderTextField: NSTextField {
         return true
     }
 
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let isFocused = window?.firstResponder === self
+        let bounds = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6)
+
+        NSColor.textBackgroundColor.setFill()
+        path.fill()
+
+        if isFocused {
+            NSColor.keyboardFocusIndicatorColor.setStroke()
+            path.lineWidth = 2
+        } else {
+            NSColor.separatorColor.setStroke()
+            path.lineWidth = 1
+        }
+        path.stroke()
+    }
+
     private func recordShortcut(from event: NSEvent) {
         let modifiers = Self.carbonModifiers(from: event.modifierFlags)
         guard modifiers != 0 else {
@@ -181,8 +232,10 @@ private final class ShortcutRecorderTextField: NSTextField {
         }
 
         let shortcut = AppConfig.Shortcut(keyCode: UInt32(event.keyCode), modifiers: modifiers)
-        stringValue = shortcut.description
+        shortcutDescription = shortcut.description
         onShortcut?(shortcut)
+        isRecording = false
+        window?.makeFirstResponder(nil)
     }
 
     private static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {

@@ -47,15 +47,17 @@ final class AppCoordinator {
             return isActivelyEditingHere || self.overlayController.shouldHoldVisibility
         }
 
-        tracker.onUpdate = { [weak self] snapshot in
+        tracker.onUpdate = { [weak self] update in
             guard let self else { return }
-            guard let snapshot else {
+            switch update {
+            case .snapshot(let snapshot):
+                self.viewModel.update(state: snapshot.state, displayMode: self.config.displayMode)
+                self.overlayController.update(with: snapshot, config: self.config)
+            case .temporarilyHiddenForMotion:
                 self.overlayController.hide()
-                return
+            case .hidden:
+                self.overlayController.hide()
             }
-
-            self.viewModel.update(state: snapshot.state, displayMode: self.config.displayMode)
-            self.overlayController.update(with: snapshot, config: self.config)
         }
 
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(

@@ -1,4 +1,5 @@
 import ApplicationServices
+import Foundation
 
 enum AccessibilityPermissionManager {
     static func ensurePrompted() {
@@ -8,6 +9,13 @@ enum AccessibilityPermissionManager {
     }
 
     static var isTrusted: Bool {
-        AXIsProcessTrusted()
+        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
+    static var appName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? "FinderBreadcrumbs"
     }
 }
