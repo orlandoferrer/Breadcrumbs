@@ -109,10 +109,11 @@ final class FinderWindowTracker {
         if snapshot != lastSnapshot {
             if let lastSnapshot, snapshot.frame != lastSnapshot.frame {
                 motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
-                beginMotionHiding(with: snapshot)
-                self.lastSnapshot = snapshot
-                updateTimerIfNeeded(finderIsFrontmost: finderIsFrontmost)
-                return
+                if beginMotionHiding(with: snapshot) {
+                    self.lastSnapshot = snapshot
+                    updateTimerIfNeeded(finderIsFrontmost: finderIsFrontmost)
+                    return
+                }
             }
             lastSnapshot = snapshot
             if isTemporarilyHiddenForMotion {
@@ -375,7 +376,7 @@ final class FinderWindowTracker {
         case kAXMovedNotification,
              kAXResizedNotification:
             motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
-            beginMotionHiding()
+            _ = beginMotionHiding()
             logFinderWindowDiagnostics(reason: notification)
             refreshNow()
             scheduleBurstRefreshes()
@@ -402,10 +403,10 @@ final class FinderWindowTracker {
         pendingBurstRefreshes.removeAll()
     }
 
-    private func beginMotionHiding(with snapshot: FinderWindowSnapshot? = nil) {
+    private func beginMotionHiding(with snapshot: FinderWindowSnapshot? = nil) -> Bool {
         guard shouldRemainVisible?() != true else {
             cancelMotionHiding()
-            return
+            return false
         }
 
         if let snapshot {
@@ -418,6 +419,7 @@ final class FinderWindowTracker {
         }
 
         scheduleMotionSettleRefresh()
+        return true
     }
 
     private func scheduleMotionSettleRefresh() {

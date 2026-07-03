@@ -74,14 +74,10 @@ final class OverlayWindowController {
 
     @discardableResult
     func beginEditing() -> Bool {
-        if !panel.isVisible {
-            panel.orderFrontRegardless()
-        }
-        visibilityHoldUntil = Date().addingTimeInterval(0.6)
         guard viewModel.beginEditing() else {
-            visibilityHoldUntil = nil
             return false
         }
+        visibilityHoldUntil = Date().addingTimeInterval(0.6)
         installOutsideClickMonitor()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)

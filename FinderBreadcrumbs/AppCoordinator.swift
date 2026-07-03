@@ -13,6 +13,7 @@ final class AppCoordinator {
     private let permissionsOnboardingWindowController = PermissionsOnboardingWindowController()
     private var workspaceObserver: NSObjectProtocol?
     private var didDismissPermissionsOnboardingThisRun = false
+    private var isHotKeyEditingAttemptInProgress = false
 
     init(config: AppConfig = AppConfigLoader.load(), automationService: FinderAutomationServing = FinderAutomationService()) {
         self.config = config
@@ -44,7 +45,7 @@ final class AppCoordinator {
         tracker.shouldRemainVisible = { [weak self] in
             guard let self else { return false }
             let isActivelyEditingHere = self.viewModel.isEditing && NSApp.isActive
-            return isActivelyEditingHere || self.overlayController.shouldHoldVisibility
+            return self.isHotKeyEditingAttemptInProgress || isActivelyEditingHere || self.overlayController.shouldHoldVisibility
         }
 
         tracker.onUpdate = { [weak self] update in
@@ -54,8 +55,10 @@ final class AppCoordinator {
                 self.viewModel.update(state: snapshot.state, displayMode: self.config.displayMode)
                 self.overlayController.update(with: snapshot, config: self.config)
             case .temporarilyHiddenForMotion:
+                guard !self.shouldKeepOverlayVisible else { return }
                 self.overlayController.hide()
             case .hidden:
+                guard !self.shouldKeepOverlayVisible else { return }
                 self.overlayController.hide()
             }
         }
@@ -142,17 +145,28 @@ final class AppCoordinator {
     }
 
     private func beginEditingFromHotKey() {
+        isHotKeyEditingAttemptInProgress = true
         tracker.refreshNow()
         if overlayController.beginEditing() {
+            isHotKeyEditingAttemptInProgress = false
             return
         }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            defer {
+                self.isHotKeyEditingAttemptInProgress = false
+            }
             guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else { return }
             self.tracker.refreshNow()
             _ = self.overlayController.beginEditing()
         }
+    }
+
+    private var shouldKeepOverlayVisible: Bool {
+        isHotKeyEditingAttemptInProgress
+            || (viewModel.isEditing && NSApp.isActive)
+            || overlayController.shouldHoldVisibility
     }
 
     private func handleActivatedApplicationChange() {
