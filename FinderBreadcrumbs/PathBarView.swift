@@ -2,7 +2,6 @@ import SwiftUI
 
 struct PathBarView: View {
     @ObservedObject var viewModel: PathBarViewModel
-    let onActivateEditing: () -> Void
 
     var body: some View {
         ZStack {
@@ -61,11 +60,6 @@ struct PathBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
-        .onTapGesture {
-            if !viewModel.isEditing {
-                onActivateEditing()
-            }
-        }
         .padding(.horizontal, 1)
         .padding(.vertical, 1)
     }
@@ -130,6 +124,30 @@ private struct ReadOnlyPathContent: View {
 
     private var primaryTextColor: Color {
         Color(nsColor: .labelColor)
+    }
+}
+
+enum EditingCursorPlacement {
+    static func endInsertionIndex(for field: NSTextField) -> Int {
+        (field.stringValue as NSString).length
+    }
+}
+
+enum PathEditorActivation {
+    @MainActor
+    static func activateEditing(in field: NSTextField, window: NSWindow) {
+        field.selectText(nil)
+
+        guard let editor = window.fieldEditor(true, for: field) as? NSTextView else {
+            return
+        }
+
+        editor.insertionPointColor = .labelColor
+        editor.drawsBackground = false
+        editor.selectedRange = NSRange(
+            location: EditingCursorPlacement.endInsertionIndex(for: field),
+            length: 0
+        )
     }
 }
 
@@ -204,13 +222,12 @@ private struct PathEditorField: NSViewRepresentable {
                     return
                 }
 
-                window.makeFirstResponder(field)
-                if let editor = window.fieldEditor(true, for: field) as? NSTextView {
-                    editor.insertionPointColor = .labelColor
-                    editor.drawsBackground = false
-                    editor.selectedRange = NSRange(location: (field.stringValue as NSString).length, length: 0)
-                }
+                PathEditorActivation.activateEditing(in: field, window: window)
+                field.didScheduleInitialFocus = false
+                return
             }
+
+            field.didScheduleInitialFocus = false
         }
 
         func controlTextDidBeginEditing(_ obj: Notification) {

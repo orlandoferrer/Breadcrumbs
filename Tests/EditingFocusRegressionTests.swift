@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import Foundation
 
@@ -7,6 +8,7 @@ struct EditingFocusRegressionTests {
         await MainActor.run {
             testOutsideClickCancelDoesNotReturnFocusToFinder()
             testCommitStillReturnsFocusToFinder()
+            testEditingInitialCursorPlacementDefaultsToEnd()
         }
         testReadableShortcutDecoding()
         testLegacyShortcutDecoding()
@@ -46,6 +48,18 @@ struct EditingFocusRegressionTests {
         expect(
             returnFocusRequests == [true],
             "Committing an edit should still return focus to Finder."
+        )
+    }
+
+    @MainActor
+    private static func testEditingInitialCursorPlacementDefaultsToEnd() {
+        let field = KeyAwareTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        field.stringValue = "/Users/orlando/Documents/BreadCrumbs"
+        let insertionIndex = EditingCursorPlacement.endInsertionIndex(for: field)
+
+        expect(
+            insertionIndex == field.stringValue.count,
+            "Edit mode should place the caret at the end of the path string."
         )
     }
 

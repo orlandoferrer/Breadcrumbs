@@ -81,6 +81,7 @@ final class OverlayWindowController {
         installOutsideClickMonitor()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        scheduleEditorActivationAttempt()
         return true
     }
 
@@ -139,12 +140,43 @@ final class OverlayWindowController {
     }
 
     private func makeRootView() -> PathBarView {
-        PathBarView(
-            viewModel: viewModel,
-            onActivateEditing: { [weak self] in
-                self?.beginEditing()
+        PathBarView(viewModel: viewModel)
+    }
+
+    private func scheduleEditorActivationAttempt() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await Task.yield()
+            if focusEditorIfAvailable() {
+                return
             }
-        )
+            await Task.yield()
+            _ = focusEditorIfAvailable()
+        }
+    }
+
+    private func focusEditorIfAvailable() -> Bool {
+        guard let contentView = panel.contentView,
+              let field = findEditableField(in: contentView) else {
+            return false
+        }
+
+        PathEditorActivation.activateEditing(in: field, window: panel)
+        return true
+    }
+
+    private func findEditableField(in view: NSView) -> KeyAwareTextField? {
+        if let field = view as? KeyAwareTextField {
+            return field
+        }
+
+        for subview in view.subviews {
+            if let field = findEditableField(in: subview) {
+                return field
+            }
+        }
+
+        return nil
     }
 
     private static func pinnedAppearance() -> NSAppearance? {
