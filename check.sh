@@ -17,6 +17,7 @@ swiftc \
   -module-cache-path "$MODULE_CACHE" \
   FinderBreadcrumbs/AppConfig.swift \
   FinderBreadcrumbs/FinderAutomationService.swift \
+  FinderBreadcrumbs/HotKeyManager.swift \
   FinderBreadcrumbs/PathBarView.swift \
   FinderBreadcrumbs/PathBarViewModel.swift \
   Tests/EditingFocusRegressionTests.swift \

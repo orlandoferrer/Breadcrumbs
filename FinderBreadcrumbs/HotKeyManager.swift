@@ -1,44 +1,104 @@
 import Carbon
 import Foundation
 
+protocol HotKeyRegistering {
+    func register(
+        keyCode: UInt32,
+        modifiers: UInt32,
+        hotKeyID: EventHotKeyID,
+        target: EventTargetRef?,
+        hotKeyRef: UnsafeMutablePointer<EventHotKeyRef?>
+    ) -> OSStatus
+    func installHandler(
+        target: EventTargetRef?,
+        handler: EventHandlerUPP,
+        eventSpec: UnsafePointer<EventTypeSpec>,
+        userData: UnsafeMutableRawPointer?,
+        eventHandlerRef: UnsafeMutablePointer<EventHandlerRef?>
+    ) -> OSStatus
+    func unregister(_ hotKeyRef: EventHotKeyRef) -> OSStatus
+    func removeHandler(_ eventHandlerRef: EventHandlerRef) -> OSStatus
+}
+
+struct CarbonHotKeyRegistrar: HotKeyRegistering {
+    func register(
+        keyCode: UInt32,
+        modifiers: UInt32,
+        hotKeyID: EventHotKeyID,
+        target: EventTargetRef?,
+        hotKeyRef: UnsafeMutablePointer<EventHotKeyRef?>
+    ) -> OSStatus {
+        RegisterEventHotKey(keyCode, modifiers, hotKeyID, target, 0, hotKeyRef)
+    }
+
+    func installHandler(
+        target: EventTargetRef?,
+        handler: EventHandlerUPP,
+        eventSpec: UnsafePointer<EventTypeSpec>,
+        userData: UnsafeMutableRawPointer?,
+        eventHandlerRef: UnsafeMutablePointer<EventHandlerRef?>
+    ) -> OSStatus {
+        InstallEventHandler(target, handler, 1, eventSpec, userData, eventHandlerRef)
+    }
+
+    func unregister(_ hotKeyRef: EventHotKeyRef) -> OSStatus {
+        UnregisterEventHotKey(hotKeyRef)
+    }
+
+    func removeHandler(_ eventHandlerRef: EventHandlerRef) -> OSStatus {
+        RemoveEventHandler(eventHandlerRef)
+    }
+}
+
 final class HotKeyManager {
     var onActivate: (() -> Void)?
 
+    private let registrar: HotKeyRegistering
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
     private static let registeredHotKeyID: UInt32 = 1
 
-    func register(shortcut: AppConfig.Shortcut) {
+    init(registrar: HotKeyRegistering = CarbonHotKeyRegistrar()) {
+        self.registrar = registrar
+    }
+
+    @discardableResult
+    func register(shortcut: AppConfig.Shortcut) -> OSStatus {
         unregister()
 
         let eventHotKeyID = EventHotKeyID(signature: OSType(0x46425244), id: Self.registeredHotKeyID)
-        RegisterEventHotKey(
-            shortcut.keyCode,
-            shortcut.modifiers,
-            eventHotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
+        let registerStatus = registrar.register(
+            keyCode: shortcut.keyCode,
+            modifiers: shortcut.modifiers,
+            hotKeyID: eventHotKeyID,
+            target: GetApplicationEventTarget(),
+            hotKeyRef: &hotKeyRef
         )
+        guard registerStatus == noErr else {
+            return registerStatus
+        }
 
         var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            hotKeyEventHandler,
-            1,
-            &eventSpec,
-            Unmanaged.passUnretained(self).toOpaque(),
-            &eventHandlerRef
+        let handlerStatus = registrar.installHandler(
+            target: GetApplicationEventTarget(),
+            handler: hotKeyEventHandler,
+            eventSpec: &eventSpec,
+            userData: Unmanaged.passUnretained(self).toOpaque(),
+            eventHandlerRef: &eventHandlerRef
         )
+        if handlerStatus != noErr {
+            unregister()
+        }
+        return handlerStatus
     }
 
     func unregister() {
         if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
+            _ = registrar.unregister(hotKeyRef)
             self.hotKeyRef = nil
         }
         if let eventHandlerRef {
-            RemoveEventHandler(eventHandlerRef)
+            _ = registrar.removeHandler(eventHandlerRef)
             self.eventHandlerRef = nil
         }
     }

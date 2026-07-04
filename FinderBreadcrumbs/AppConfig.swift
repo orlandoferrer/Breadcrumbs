@@ -213,7 +213,6 @@ struct AppConfig: Codable {
 
     var displayMode: DisplayMode
     var launchAtLogin: Bool
-    var trackOnlyFrontmostFinderWindow: Bool
     var activePollInterval: TimeInterval
     var motionPollInterval: TimeInterval
     var motionTrackingDuration: TimeInterval
@@ -227,7 +226,6 @@ struct AppConfig: Codable {
     init(
         displayMode: DisplayMode,
         launchAtLogin: Bool,
-        trackOnlyFrontmostFinderWindow: Bool,
         activePollInterval: TimeInterval,
         motionPollInterval: TimeInterval,
         motionTrackingDuration: TimeInterval,
@@ -240,7 +238,6 @@ struct AppConfig: Codable {
     ) {
         self.displayMode = displayMode
         self.launchAtLogin = launchAtLogin
-        self.trackOnlyFrontmostFinderWindow = trackOnlyFrontmostFinderWindow
         self.activePollInterval = activePollInterval
         self.motionPollInterval = motionPollInterval
         self.motionTrackingDuration = motionTrackingDuration
@@ -257,7 +254,6 @@ struct AppConfig: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         displayMode = try container.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? defaults.displayMode
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
-        trackOnlyFrontmostFinderWindow = try container.decodeIfPresent(Bool.self, forKey: .trackOnlyFrontmostFinderWindow) ?? defaults.trackOnlyFrontmostFinderWindow
         activePollInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .activePollInterval) ?? defaults.activePollInterval
         motionPollInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .motionPollInterval) ?? defaults.motionPollInterval
         motionTrackingDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .motionTrackingDuration) ?? defaults.motionTrackingDuration
@@ -272,7 +268,6 @@ struct AppConfig: Codable {
     private enum CodingKeys: String, CodingKey {
         case displayMode
         case launchAtLogin
-        case trackOnlyFrontmostFinderWindow
         case activePollInterval
         case motionPollInterval
         case motionTrackingDuration
@@ -287,7 +282,6 @@ struct AppConfig: Codable {
     static let `default` = AppConfig(
         displayMode: .text,
         launchAtLogin: false,
-        trackOnlyFrontmostFinderWindow: true,
         activePollInterval: 0.12,
         motionPollInterval: 0.016,
         motionTrackingDuration: 0.75,

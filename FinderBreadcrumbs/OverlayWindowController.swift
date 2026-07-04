@@ -37,10 +37,6 @@ final class OverlayWindowController {
         }
 
         self.panel = panel
-        panel.onMouseDown = { [weak self] in
-            guard let self, !self.viewModel.isEditing else { return }
-            self.beginEditing()
-        }
         panel.contentView = NSHostingView(rootView: makeRootView())
     }
 
@@ -63,13 +59,17 @@ final class OverlayWindowController {
         hide()
     }
 
+    var isVisible: Bool {
+        panel.isVisible
+    }
+
     var shouldHoldVisibility: Bool {
         guard panel.isVisible else { return false }
-        if panel.isKeyWindow {
-            return viewModel.isEditing
+        if panel.isKeyWindow, viewModel.isEditing {
+            return true
         }
         guard let visibilityHoldUntil else { return false }
-        return viewModel.isEditing && visibilityHoldUntil > Date()
+        return visibilityHoldUntil > Date()
     }
 
     @discardableResult
@@ -77,11 +77,10 @@ final class OverlayWindowController {
         guard viewModel.beginEditing() else {
             return false
         }
-        visibilityHoldUntil = Date().addingTimeInterval(0.6)
+        holdVisibilityBriefly()
         installOutsideClickMonitor()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
-        scheduleEditorActivationAttempt()
         return true
     }
 
@@ -112,6 +111,10 @@ final class OverlayWindowController {
         }
     }
 
+    private func holdVisibilityBriefly() {
+        visibilityHoldUntil = Date().addingTimeInterval(0.8)
+    }
+
     private func frame(for finderFrame: CGRect, config: AppConfig) -> NSRect {
         let convertedFinderFrame = convertWindowServerRectToAppKit(finderFrame)
         let proportionalInset = convertedFinderFrame.width * 0.02
@@ -140,43 +143,12 @@ final class OverlayWindowController {
     }
 
     private func makeRootView() -> PathBarView {
-        PathBarView(viewModel: viewModel)
-    }
-
-    private func scheduleEditorActivationAttempt() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await Task.yield()
-            if focusEditorIfAvailable() {
-                return
+        PathBarView(
+            viewModel: viewModel,
+            onActivateEditing: { [weak self] in
+                _ = self?.beginEditing()
             }
-            await Task.yield()
-            _ = focusEditorIfAvailable()
-        }
-    }
-
-    private func focusEditorIfAvailable() -> Bool {
-        guard let contentView = panel.contentView,
-              let field = findEditableField(in: contentView) else {
-            return false
-        }
-
-        PathEditorActivation.activateEditing(in: field, window: panel)
-        return true
-    }
-
-    private func findEditableField(in view: NSView) -> KeyAwareTextField? {
-        if let field = view as? KeyAwareTextField {
-            return field
-        }
-
-        for subview in view.subviews {
-            if let field = findEditableField(in: subview) {
-                return field
-            }
-        }
-
-        return nil
+        )
     }
 
     private static func pinnedAppearance() -> NSAppearance? {
@@ -188,17 +160,9 @@ final class OverlayWindowController {
 
 private final class FocusablePanel: NSPanel {
     var onResignKey: (() -> Void)?
-    var onMouseDown: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-
-    override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown {
-            onMouseDown?()
-        }
-        super.sendEvent(event)
-    }
 
     override func resignKey() {
         super.resignKey()

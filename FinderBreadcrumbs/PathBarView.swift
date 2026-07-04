@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PathBarView: View {
     @ObservedObject var viewModel: PathBarViewModel
+    let onActivateEditing: () -> Void
 
     var body: some View {
         ZStack {
@@ -60,6 +61,10 @@ struct PathBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
+        .onTapGesture {
+            guard !viewModel.isEditing else { return }
+            onActivateEditing()
+        }
         .padding(.horizontal, 1)
         .padding(.vertical, 1)
     }
@@ -128,6 +133,7 @@ private struct ReadOnlyPathContent: View {
 }
 
 enum EditingCursorPlacement {
+    @MainActor
     static func endInsertionIndex(for field: NSTextField) -> Int {
         (field.stringValue as NSString).length
     }
@@ -135,19 +141,24 @@ enum EditingCursorPlacement {
 
 enum PathEditorActivation {
     @MainActor
-    static func activateEditing(in field: NSTextField, window: NSWindow) {
-        field.selectText(nil)
+    @discardableResult
+    static func activateEditing(in field: NSTextField, window: NSWindow) -> Bool {
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(field)
 
-        guard let editor = window.fieldEditor(true, for: field) as? NSTextView else {
-            return
+        guard let editor = field.currentEditor() as? NSTextView else {
+            return false
         }
 
+        placeCaretAtEnd(in: editor, for: field)
+        return true
+    }
+
+    @MainActor
+    static func placeCaretAtEnd(in editor: NSTextView, for field: NSTextField) {
         editor.insertionPointColor = .labelColor
         editor.drawsBackground = false
-        editor.selectedRange = NSRange(
-            location: EditingCursorPlacement.endInsertionIndex(for: field),
-            length: 0
-        )
+        editor.selectedRange = NSRange(location: EditingCursorPlacement.endInsertionIndex(for: field), length: 0)
     }
 }
 
@@ -160,6 +171,8 @@ private struct PathEditorField: NSViewRepresentable {
     func makeNSView(context: Context) -> KeyAwareTextField {
         let field = KeyAwareTextField()
         field.isBordered = false
+        field.isEditable = true
+        field.isSelectable = true
         field.backgroundColor = .clear
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 12.5, weight: .regular)
@@ -217,24 +230,17 @@ private struct PathEditorField: NSViewRepresentable {
             Task { @MainActor [weak field] in
                 guard let field else { return }
                 await Task.yield()
-                guard let window = field.window else {
-                    field.didScheduleInitialFocus = false
-                    return
+                if let window = field.window {
+                    PathEditorActivation.activateEditing(in: field, window: window)
                 }
-
-                PathEditorActivation.activateEditing(in: field, window: window)
                 field.didScheduleInitialFocus = false
-                return
             }
-
-            field.didScheduleInitialFocus = false
         }
 
         func controlTextDidBeginEditing(_ obj: Notification) {
             guard let field = obj.object as? NSTextField,
                   let editor = field.currentEditor() as? NSTextView else { return }
-            editor.insertionPointColor = .labelColor
-            editor.drawsBackground = false
+            PathEditorActivation.placeCaretAtEnd(in: editor, for: field)
         }
 
         func controlTextDidChange(_ obj: Notification) {
@@ -267,4 +273,8 @@ private struct PathEditorField: NSViewRepresentable {
 
 final class KeyAwareTextField: NSTextField {
     var didScheduleInitialFocus = false
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
 }

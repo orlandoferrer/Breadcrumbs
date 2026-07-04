@@ -35,13 +35,8 @@ final class PathBarViewModel: ObservableObject {
             return
         }
 
-        let previousState = currentState
         currentState = state
         status = .ready
-
-        if isEditing, let previousState, previousState != state {
-            isEditing = false
-        }
 
         if !isEditing {
             editingText = state.resolvedPath

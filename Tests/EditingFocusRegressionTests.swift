@@ -9,11 +9,19 @@ struct EditingFocusRegressionTests {
             testOutsideClickCancelDoesNotReturnFocusToFinder()
             testCommitStillReturnsFocusToFinder()
             testEditingInitialCursorPlacementDefaultsToEnd()
+            testBeginEditingRequiresCurrentState()
+            testSameWindowUpdateDoesNotCancelEditing()
+            testDifferentWindowUpdateDoesNotCancelEditing()
+            testUnavailableUpdateDoesNotCancelEditing()
         }
         testReadableShortcutDecoding()
         testLegacyShortcutDecoding()
         testReadableShortcutEncoding()
         testConfigMissingDiagnosticsFlagUsesDefault()
+        testConfigIgnoresRemovedTrackingFlag()
+        testHotKeyRegistrationReturnsRegisterFailure()
+        testHotKeyRegistrationReturnsHandlerFailureAndCleansUp()
+        testHotKeyRegistrationSuccessInstallsHandler()
     }
 
     @MainActor
@@ -61,6 +69,81 @@ struct EditingFocusRegressionTests {
             insertionIndex == field.stringValue.count,
             "Edit mode should place the caret at the end of the path string."
         )
+    }
+
+    @MainActor
+    private static func testBeginEditingRequiresCurrentState() {
+        let viewModel = PathBarViewModel(
+            displayMode: .text,
+            automationService: MockFinderAutomationService()
+        )
+
+        expect(!viewModel.beginEditing(), "Editing should not begin before Finder state is known.")
+        expect(!viewModel.isEditing, "Failed edit attempts must not leave the view model editing.")
+    }
+
+    @MainActor
+    private static func testSameWindowUpdateDoesNotCancelEditing() {
+        let viewModel = makeReadyViewModel()
+        var returnFocusRequests: [Bool] = []
+        viewModel.onEditingEnded = { shouldReturnFocusToFinder in
+            returnFocusRequests.append(shouldReturnFocusToFinder)
+        }
+
+        expect(viewModel.beginEditing(), "Expected editing to begin with a current Finder state.")
+        viewModel.editingText = "/tmp/manual"
+        viewModel.update(
+            state: FinderState(
+                displayedPath: "/private/tmp",
+                resolvedPath: "/private/tmp",
+                windowID: 1
+            ),
+            displayMode: .text
+        )
+
+        expect(viewModel.isEditing, "Same-window tracking updates must not knock the bar out of edit mode.")
+        expect(viewModel.editingText == "/tmp/manual", "Same-window updates must not overwrite in-progress edits.")
+        expect(returnFocusRequests.isEmpty, "Same-window updates should not fire editing cleanup callbacks.")
+    }
+
+    @MainActor
+    private static func testDifferentWindowUpdateDoesNotCancelEditing() {
+        let viewModel = makeReadyViewModel()
+        var returnFocusRequests: [Bool] = []
+        viewModel.onEditingEnded = { shouldReturnFocusToFinder in
+            returnFocusRequests.append(shouldReturnFocusToFinder)
+        }
+
+        expect(viewModel.beginEditing(), "Expected editing to begin with a current Finder state.")
+        viewModel.update(
+            state: FinderState(
+                displayedPath: "/Users",
+                resolvedPath: "/Users",
+                windowID: 2
+            ),
+            displayMode: .text
+        )
+
+        expect(viewModel.isEditing, "Tracking updates must not cancel an active edit session.")
+        expect(viewModel.editingText == "/tmp", "Tracking updates must not overwrite in-progress edits.")
+        expect(returnFocusRequests.isEmpty, "Tracking updates should not fire editing cleanup callbacks.")
+    }
+
+    @MainActor
+    private static func testUnavailableUpdateDoesNotCancelEditing() {
+        let viewModel = makeReadyViewModel()
+        var returnFocusRequests: [Bool] = []
+        viewModel.onEditingEnded = { shouldReturnFocusToFinder in
+            returnFocusRequests.append(shouldReturnFocusToFinder)
+        }
+
+        expect(viewModel.beginEditing(), "Expected editing to begin with a current Finder state.")
+        viewModel.editingText = "/tmp/manual"
+        viewModel.update(state: nil, displayMode: .text)
+
+        expect(viewModel.isEditing, "Transient unavailable tracking updates must not cancel an active edit session.")
+        expect(viewModel.editingText == "/tmp/manual", "Unavailable updates must not overwrite in-progress edits.")
+        expect(returnFocusRequests.isEmpty, "Unavailable updates should not fire editing cleanup callbacks.")
     }
 
     @MainActor
@@ -123,7 +206,6 @@ struct EditingFocusRegressionTests {
               "motionTrackingDuration": 0.75,
               "preferredBarHeight": 34,
               "shortcut": "cmd+option+l",
-              "trackOnlyFrontmostFinderWindow": true,
               "verticalGap": -6
             }
             """.utf8))
@@ -133,6 +215,56 @@ struct EditingFocusRegressionTests {
             config.debugLogFinderWindowDiagnostics == false,
             "Older config files should keep diagnostics disabled by default."
         )
+    }
+
+    private static func testConfigIgnoresRemovedTrackingFlag() {
+        let config = tryOrFail("Expected legacy config with removed tracking flag to decode.") {
+            try JSONDecoder().decode(AppConfig.self, from: Data("""
+            {
+              "activePollInterval": 0.12,
+              "displayMode": "text",
+              "horizontalInset": 8,
+              "inactivePollInterval": 1.5,
+              "launchAtLogin": false,
+              "motionPollInterval": 0.016,
+              "motionTrackingDuration": 0.75,
+              "preferredBarHeight": 34,
+              "shortcut": "cmd+option+l",
+              "trackOnlyFrontmostFinderWindow": false,
+              "verticalGap": -6
+            }
+            """.utf8))
+        }
+
+        expect(config.shortcut == .default, "Legacy configs with removed keys should still decode normally.")
+    }
+
+    private static func testHotKeyRegistrationReturnsRegisterFailure() {
+        let registrar = MockHotKeyRegistrar(registerStatus: OSStatus(eventHotKeyExistsErr))
+        let manager = HotKeyManager(registrar: registrar)
+        let status = manager.register(shortcut: AppConfig.Shortcut.default)
+
+        expect(status == OSStatus(eventHotKeyExistsErr), "HotKeyManager should return Carbon registration failures.")
+        expect(registrar.installHandlerCalls == 0, "Handler installation should not run after registration failure.")
+    }
+
+    private static func testHotKeyRegistrationReturnsHandlerFailureAndCleansUp() {
+        let registrar = MockHotKeyRegistrar(installHandlerStatus: OSStatus(eventInternalErr))
+        let manager = HotKeyManager(registrar: registrar)
+        let status = manager.register(shortcut: AppConfig.Shortcut.default)
+
+        expect(status == OSStatus(eventInternalErr), "HotKeyManager should return handler installation failures.")
+        expect(registrar.unregisterCalls == 1, "HotKeyManager should unregister a hotkey after handler installation fails.")
+    }
+
+    private static func testHotKeyRegistrationSuccessInstallsHandler() {
+        let registrar = MockHotKeyRegistrar()
+        let manager = HotKeyManager(registrar: registrar)
+        let status = manager.register(shortcut: AppConfig.Shortcut.default)
+
+        expect(status == noErr, "HotKeyManager should return noErr after successful registration.")
+        expect(registrar.registerCalls == 1, "Expected one hotkey registration call.")
+        expect(registrar.installHandlerCalls == 1, "Expected one handler installation call.")
     }
 
     private static func decodeShortcut(from json: String) -> AppConfig.Shortcut {
@@ -167,5 +299,57 @@ private final class MockFinderAutomationService: FinderAutomationServing {
 
     func requestAutomationPermission() -> Bool {
         true
+    }
+}
+
+private final class MockHotKeyRegistrar: HotKeyRegistering {
+    let registerStatus: OSStatus
+    let installHandlerStatus: OSStatus
+    var registerCalls = 0
+    var installHandlerCalls = 0
+    var unregisterCalls = 0
+    var removeHandlerCalls = 0
+
+    init(registerStatus: OSStatus = noErr, installHandlerStatus: OSStatus = noErr) {
+        self.registerStatus = registerStatus
+        self.installHandlerStatus = installHandlerStatus
+    }
+
+    func register(
+        keyCode: UInt32,
+        modifiers: UInt32,
+        hotKeyID: EventHotKeyID,
+        target: EventTargetRef?,
+        hotKeyRef: UnsafeMutablePointer<EventHotKeyRef?>
+    ) -> OSStatus {
+        registerCalls += 1
+        if registerStatus == noErr {
+            hotKeyRef.pointee = OpaquePointer(bitPattern: 1)
+        }
+        return registerStatus
+    }
+
+    func installHandler(
+        target: EventTargetRef?,
+        handler: EventHandlerUPP,
+        eventSpec: UnsafePointer<EventTypeSpec>,
+        userData: UnsafeMutableRawPointer?,
+        eventHandlerRef: UnsafeMutablePointer<EventHandlerRef?>
+    ) -> OSStatus {
+        installHandlerCalls += 1
+        if installHandlerStatus == noErr {
+            eventHandlerRef.pointee = OpaquePointer(bitPattern: 2)
+        }
+        return installHandlerStatus
+    }
+
+    func unregister(_ hotKeyRef: EventHotKeyRef) -> OSStatus {
+        unregisterCalls += 1
+        return noErr
+    }
+
+    func removeHandler(_ eventHandlerRef: EventHandlerRef) -> OSStatus {
+        removeHandlerCalls += 1
+        return noErr
     }
 }
