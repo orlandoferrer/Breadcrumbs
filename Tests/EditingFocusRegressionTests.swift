@@ -10,9 +10,10 @@ struct EditingFocusRegressionTests {
             testCommitStillReturnsFocusToFinder()
             testEditingInitialCursorPlacementDefaultsToEnd()
             testBeginEditingRequiresCurrentState()
-            testSameWindowUpdateDoesNotCancelEditing()
-            testDifferentWindowUpdateDoesNotCancelEditing()
+            testBeginEditingIncrementsFocusSession()
+            testStateChangeEndsEditingWithoutReturningFocus()
             testUnavailableUpdateDoesNotCancelEditing()
+            testCommitUsesWindowWhereEditSessionBegan()
         }
         testReadableShortcutDecoding()
         testLegacyShortcutDecoding()
@@ -83,7 +84,20 @@ struct EditingFocusRegressionTests {
     }
 
     @MainActor
-    private static func testSameWindowUpdateDoesNotCancelEditing() {
+    private static func testBeginEditingIncrementsFocusSession() {
+        let viewModel = makeReadyViewModel()
+        let initialSessionID = viewModel.editingSessionID
+
+        expect(viewModel.beginEditing(), "Expected editing to begin with a current Finder state.")
+        expect(
+            viewModel.editingSessionID == initialSessionID + 1,
+            "Starting an edit session should advance the focus request token exactly once."
+        )
+        expect(viewModel.editingWindowID == 1, "Editing should remember the Finder window it started from.")
+    }
+
+    @MainActor
+    private static func testStateChangeEndsEditingWithoutReturningFocus() {
         let viewModel = makeReadyViewModel()
         var returnFocusRequests: [Bool] = []
         viewModel.onEditingEnded = { shouldReturnFocusToFinder in
@@ -101,32 +115,11 @@ struct EditingFocusRegressionTests {
             displayMode: .text
         )
 
-        expect(viewModel.isEditing, "Same-window tracking updates must not knock the bar out of edit mode.")
-        expect(viewModel.editingText == "/tmp/manual", "Same-window updates must not overwrite in-progress edits.")
-        expect(returnFocusRequests.isEmpty, "Same-window updates should not fire editing cleanup callbacks.")
-    }
-
-    @MainActor
-    private static func testDifferentWindowUpdateDoesNotCancelEditing() {
-        let viewModel = makeReadyViewModel()
-        var returnFocusRequests: [Bool] = []
-        viewModel.onEditingEnded = { shouldReturnFocusToFinder in
-            returnFocusRequests.append(shouldReturnFocusToFinder)
-        }
-
-        expect(viewModel.beginEditing(), "Expected editing to begin with a current Finder state.")
-        viewModel.update(
-            state: FinderState(
-                displayedPath: "/Users",
-                resolvedPath: "/Users",
-                windowID: 2
-            ),
-            displayMode: .text
-        )
-
-        expect(viewModel.isEditing, "Tracking updates must not cancel an active edit session.")
-        expect(viewModel.editingText == "/tmp", "Tracking updates must not overwrite in-progress edits.")
-        expect(returnFocusRequests.isEmpty, "Tracking updates should not fire editing cleanup callbacks.")
+        expect(!viewModel.isEditing, "Finder target changes should end an active edit session.")
+        expect(viewModel.displayedText == "/private/tmp", "The bar should refresh to the new Finder target after editing ends.")
+        expect(viewModel.editingText == "/private/tmp", "The edit buffer should reset to the latest Finder path after editing ends.")
+        expect(viewModel.editingWindowID == nil, "Ending an edit session should clear the pinned Finder window.")
+        expect(returnFocusRequests == [false], "Tracker-driven edit cancellation must not steal focus back to Finder.")
     }
 
     @MainActor
@@ -144,6 +137,40 @@ struct EditingFocusRegressionTests {
         expect(viewModel.isEditing, "Transient unavailable tracking updates must not cancel an active edit session.")
         expect(viewModel.editingText == "/tmp/manual", "Unavailable updates must not overwrite in-progress edits.")
         expect(returnFocusRequests.isEmpty, "Unavailable updates should not fire editing cleanup callbacks.")
+    }
+
+    @MainActor
+    private static func testCommitUsesWindowWhereEditSessionBegan() {
+        let automationService = RecordingFinderAutomationService()
+        let viewModel = PathBarViewModel(
+            displayMode: .text,
+            automationService: automationService
+        )
+        viewModel.update(
+            state: FinderState(
+                displayedPath: "/tmp",
+                resolvedPath: "/tmp",
+                windowID: 1
+            ),
+            displayMode: .text
+        )
+
+        expect(viewModel.beginEditing(), "Expected editing to begin with a current Finder state.")
+        viewModel.update(
+            state: FinderState(
+                displayedPath: "/Users",
+                resolvedPath: "/Users",
+                windowID: 2
+            ),
+            displayMode: .text
+        )
+        viewModel.editingText = "/tmp"
+        viewModel.commitEditing()
+
+        expect(
+            automationService.navigateRequests.isEmpty,
+            "Once a Finder target change ends editing, commit must not navigate a different window implicitly."
+        )
     }
 
     @MainActor
@@ -291,6 +318,27 @@ private final class MockFinderAutomationService: FinderAutomationServing {
 
     func navigate(to path: String, windowID: Int?) -> Bool {
         true
+    }
+
+    func hasAutomationPermission() -> Bool {
+        true
+    }
+
+    func requestAutomationPermission() -> Bool {
+        true
+    }
+}
+
+private final class RecordingFinderAutomationService: FinderAutomationServing {
+    var navigateRequests: [(path: String, windowID: Int?)] = []
+
+    func currentState() -> FinderState? {
+        nil
+    }
+
+    func navigate(to path: String, windowID: Int?) -> Bool {
+        navigateRequests.append((path, windowID))
+        return true
     }
 
     func hasAutomationPermission() -> Bool {

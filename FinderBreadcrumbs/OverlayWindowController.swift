@@ -37,6 +37,9 @@ final class OverlayWindowController {
         }
 
         self.panel = panel
+        panel.onMouseDown = { [weak self] in
+            self?.handleMouseDown()
+        }
         panel.contentView = NSHostingView(rootView: makeRootView())
     }
 
@@ -115,6 +118,12 @@ final class OverlayWindowController {
         visibilityHoldUntil = Date().addingTimeInterval(0.8)
     }
 
+    private func handleMouseDown() {
+        holdVisibilityBriefly()
+        guard !viewModel.isEditing else { return }
+        _ = beginEditing()
+    }
+
     private func frame(for finderFrame: CGRect, config: AppConfig) -> NSRect {
         let convertedFinderFrame = convertWindowServerRectToAppKit(finderFrame)
         let proportionalInset = convertedFinderFrame.width * 0.02
@@ -144,10 +153,7 @@ final class OverlayWindowController {
 
     private func makeRootView() -> PathBarView {
         PathBarView(
-            viewModel: viewModel,
-            onActivateEditing: { [weak self] in
-                _ = self?.beginEditing()
-            }
+            viewModel: viewModel
         )
     }
 
@@ -160,9 +166,17 @@ final class OverlayWindowController {
 
 private final class FocusablePanel: NSPanel {
     var onResignKey: (() -> Void)?
+    var onMouseDown: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown {
+            onMouseDown?()
+        }
+        super.sendEvent(event)
+    }
 
     override func resignKey() {
         super.resignKey()

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct PathBarView: View {
     @ObservedObject var viewModel: PathBarViewModel
-    let onActivateEditing: () -> Void
 
     var body: some View {
         ZStack {
@@ -30,6 +29,7 @@ struct PathBarView: View {
                         if viewModel.isEditing {
                             PathEditorField(
                                 text: $viewModel.editingText,
+                                focusRequestID: viewModel.editingSessionID,
                                 onCommit: { viewModel.commitEditing() },
                                 onCancel: { viewModel.cancelEditing() },
                                 onTabComplete: { viewModel.applyUnambiguousCompletion() }
@@ -61,10 +61,6 @@ struct PathBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
-        .onTapGesture {
-            guard !viewModel.isEditing else { return }
-            onActivateEditing()
-        }
         .padding(.horizontal, 1)
         .padding(.vertical, 1)
     }
@@ -144,14 +140,26 @@ enum PathEditorActivation {
     @discardableResult
     static func activateEditing(in field: NSTextField, window: NSWindow) -> Bool {
         window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(field)
 
-        guard let editor = field.currentEditor() as? NSTextView else {
-            return false
+        if let editor = field.currentEditor() as? NSTextView {
+            placeCaretAtEnd(in: editor, for: field)
+            return true
         }
 
-        placeCaretAtEnd(in: editor, for: field)
-        return true
+        field.selectText(nil)
+        if let editor = field.currentEditor() as? NSTextView {
+            placeCaretAtEnd(in: editor, for: field)
+            return true
+        }
+
+        window.makeFirstResponder(field)
+        if let editor = window.fieldEditor(true, for: field) as? NSTextView {
+            window.makeFirstResponder(editor)
+            placeCaretAtEnd(in: editor, for: field)
+            return true
+        }
+
+        return false
     }
 
     @MainActor
@@ -164,6 +172,7 @@ enum PathEditorActivation {
 
 private struct PathEditorField: NSViewRepresentable {
     @Binding var text: String
+    let focusRequestID: Int
     let onCommit: () -> Void
     let onCancel: () -> Void
     let onTabComplete: () -> Void
@@ -183,7 +192,7 @@ private struct PathEditorField: NSViewRepresentable {
             onCancel: onCancel,
             onTabComplete: onTabComplete
         )
-        context.coordinator.scheduleInitialFocus(for: field)
+        context.coordinator.scheduleInitialFocus(for: field, focusRequestID: focusRequestID)
         return field
     }
 
@@ -196,7 +205,7 @@ private struct PathEditorField: NSViewRepresentable {
             onCancel: onCancel,
             onTabComplete: onTabComplete
         )
-        context.coordinator.scheduleInitialFocus(for: nsView)
+        context.coordinator.scheduleInitialFocus(for: nsView, focusRequestID: focusRequestID)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -224,16 +233,23 @@ private struct PathEditorField: NSViewRepresentable {
         }
 
         @MainActor
-        func scheduleInitialFocus(for field: KeyAwareTextField) {
-            guard !field.didScheduleInitialFocus else { return }
-            field.didScheduleInitialFocus = true
+        func scheduleInitialFocus(for field: KeyAwareTextField, focusRequestID: Int) {
+            guard field.lastHandledFocusRequestID != focusRequestID,
+                  field.pendingFocusRequestID != focusRequestID else { return }
+            field.pendingFocusRequestID = focusRequestID
             Task { @MainActor [weak field] in
                 guard let field else { return }
-                await Task.yield()
-                if let window = field.window {
-                    PathEditorActivation.activateEditing(in: field, window: window)
+                defer {
+                    field.pendingFocusRequestID = nil
                 }
-                field.didScheduleInitialFocus = false
+                for _ in 0..<3 {
+                    await Task.yield()
+                    guard let window = field.window else { continue }
+                    if PathEditorActivation.activateEditing(in: field, window: window) {
+                        field.lastHandledFocusRequestID = focusRequestID
+                        return
+                    }
+                }
             }
         }
 
@@ -272,7 +288,8 @@ private struct PathEditorField: NSViewRepresentable {
 }
 
 final class KeyAwareTextField: NSTextField {
-    var didScheduleInitialFocus = false
+    var pendingFocusRequestID: Int?
+    var lastHandledFocusRequestID: Int?
 
     override var acceptsFirstResponder: Bool {
         true

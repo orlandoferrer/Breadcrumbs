@@ -18,6 +18,8 @@ final class PathBarViewModel: ObservableObject {
 
     private let automationService: FinderAutomationServing
     private(set) var currentState: FinderState?
+    private(set) var editingSessionID = 0
+    private(set) var editingWindowID: Int?
 
     init(displayMode: AppConfig.DisplayMode, automationService: FinderAutomationServing) {
         self.displayMode = displayMode
@@ -35,8 +37,13 @@ final class PathBarViewModel: ObservableObject {
             return
         }
 
+        let previousState = currentState
         currentState = state
         status = .ready
+
+        if isEditing, let previousState, previousState != state {
+            endEditingSession(returnFocusToFinder: false, resetEditingTextFromCurrentState: false)
+        }
 
         if !isEditing {
             editingText = state.resolvedPath
@@ -49,19 +56,18 @@ final class PathBarViewModel: ObservableObject {
     func beginEditing() -> Bool {
         guard let currentState else { return false }
         editingText = currentState.resolvedPath
+        editingWindowID = currentState.windowID
+        editingSessionID += 1
         isEditing = true
         return true
     }
 
     func cancelEditing(returnFocusToFinder: Bool = true) {
-        isEditing = false
-        if let currentState {
-            editingText = currentState.resolvedPath
-        }
-        onEditingEnded?(returnFocusToFinder)
+        endEditingSession(returnFocusToFinder: returnFocusToFinder, resetEditingTextFromCurrentState: true)
     }
 
     func commitEditing() {
+        guard isEditing else { return }
         let candidate = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty else {
             cancelEditing()
@@ -69,8 +75,9 @@ final class PathBarViewModel: ObservableObject {
         }
 
         let autocompleted = completePathIfUnambiguous(candidate) ?? candidate
-        if automationService.navigate(to: autocompleted, windowID: currentState?.windowID) {
+        if automationService.navigate(to: autocompleted, windowID: editingWindowID ?? currentState?.windowID) {
             isEditing = false
+            editingWindowID = nil
             editingText = autocompleted
             if var currentState {
                 currentState = FinderState(
@@ -123,5 +130,17 @@ final class PathBarViewModel: ObservableObject {
         return URL(fileURLWithPath: searchDirectory)
             .appendingPathComponent(matches[0], isDirectory: true)
             .path
+    }
+
+    private func endEditingSession(
+        returnFocusToFinder: Bool,
+        resetEditingTextFromCurrentState: Bool
+    ) {
+        isEditing = false
+        editingWindowID = nil
+        if resetEditingTextFromCurrentState, let currentState {
+            editingText = currentState.resolvedPath
+        }
+        onEditingEnded?(returnFocusToFinder)
     }
 }
