@@ -11,10 +11,10 @@ final class AppCoordinator {
     private let overlayController: OverlayWindowController
     private let hotKeyManager = HotKeyManager()
     private let settingsWindowController = SettingsWindowController()
-    private let permissionsOnboardingWindowController = PermissionsOnboardingWindowController()
+    private let welcomeWindowController = WelcomeWindowController()
     private var workspaceObserver: NSObjectProtocol?
-    private var didDismissPermissionsOnboardingThisRun = false
     private var isHotKeyEditingAttemptInProgress = false
+    private let hasSeenWelcomeKey = "hasSeenWelcome"
 
     init(config: AppConfig = AppConfigLoader.load(), automationService: FinderAutomationServing = FinderAutomationService()) {
         self.config = config
@@ -25,7 +25,7 @@ final class AppCoordinator {
     }
 
     func start() {
-        showPermissionsOnboardingIfNeeded()
+        showWelcomeIfNeeded()
 
         viewModel.onEditingEnded = { shouldReturnFocusToFinder in
             self.overlayController.endEditing()
@@ -101,48 +101,15 @@ final class AppCoordinator {
         )
     }
 
-    private func showPermissionsOnboardingIfNeeded() {
-        let status = permissionStatus()
-        guard !status.isComplete, !didDismissPermissionsOnboardingThisRun else { return }
+    private func showWelcomeIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: hasSeenWelcomeKey) else { return }
 
-        permissionsOnboardingWindowController.show(
-            status: status,
-            onOpenAccessibility: {
-                AccessibilityPermissionManager.ensurePrompted()
-                Self.openAccessibilitySettings()
-            },
-            onAllowFinderAccess: { [weak self] in
-                _ = self?.automationService.requestAutomationPermission()
-            },
-            onCheckAgain: { [weak self] in
-                self?.permissionStatus() ?? PermissionStatus(accessibilityGranted: false, finderAccessGranted: false)
-            },
+        welcomeWindowController.show(
             onDismiss: { [weak self] in
-                self?.didDismissPermissionsOnboardingThisRun = true
+                guard let self else { return }
+                UserDefaults.standard.set(true, forKey: self.hasSeenWelcomeKey)
             }
         )
-    }
-
-    private func permissionStatus() -> PermissionStatus {
-        PermissionStatus(
-            accessibilityGranted: AccessibilityPermissionManager.isTrusted,
-            finderAccessGranted: automationService.hasAutomationPermission()
-        )
-    }
-
-    private static func openAccessibilitySettings() {
-        let urls = [
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
-        ]
-
-        for rawURL in urls {
-            guard let url = URL(string: rawURL),
-                  NSWorkspace.shared.open(url) else {
-                continue
-            }
-            return
-        }
     }
 
     private func beginEditingFromHotKey() {

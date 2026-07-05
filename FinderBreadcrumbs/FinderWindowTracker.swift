@@ -33,11 +33,15 @@ final class FinderWindowTracker {
     private var motionSettleRefresh: DispatchWorkItem?
     private var pendingMotionSnapshot: FinderWindowSnapshot?
     private var isTemporarilyHiddenForMotion = false
+    private var isOverlayHidden = true
+    private var didPromptForAccessibilityThisRun = false
+    private var suppressMotionHidingUntil: Date?
     private var lastDiagnosticSignature: String?
     private var missingSnapshotGraceUntil: Date?
     private var lastCaptureWasKnownChildWindow = false
     private let missingSnapshotGraceDuration: TimeInterval = 0.25
     private let motionSettleDelay: TimeInterval = 0.15
+    private let motionHidingSuppressionDuration: TimeInterval = 0.35
 
     init(config: AppConfig, automationService: FinderAutomationServing) {
         self.config = config
@@ -45,7 +49,6 @@ final class FinderWindowTracker {
     }
 
     func start() {
-        syncAccessibilityObservation()
         rescheduleTimer(finderIsFrontmost: isFinderFrontmost())
     }
 
@@ -63,14 +66,20 @@ final class FinderWindowTracker {
 
     @objc
     private func poll() {
-        syncAccessibilityObservation()
         let finderIsFrontmost = isFinderFrontmost()
+        if finderIsFrontmost {
+            syncAccessibilityObservation()
+        } else {
+            teardownAccessibilityObservation()
+        }
+
         if finderIsFrontmost != isUsingActiveInterval {
             rescheduleTimer(finderIsFrontmost: finderIsFrontmost)
         }
 
         guard finderIsFrontmost else {
             motionTrackingDeadline = nil
+            suppressMotionHidingUntil = nil
             lastDiagnosticSignature = nil
             missingSnapshotGraceUntil = nil
             lastCaptureWasKnownChildWindow = false
@@ -78,10 +87,7 @@ final class FinderWindowTracker {
             if shouldRemainVisible?() == true {
                 return
             }
-            if lastSnapshot != nil {
-                lastSnapshot = nil
-                onUpdate?(.hidden)
-            }
+            emitHidden(preserveLastSnapshot: true)
             return
         }
 
@@ -92,14 +98,16 @@ final class FinderWindowTracker {
                 missingSnapshotGraceUntil = nil
                 return
             }
+            if isTemporarilyHiddenForMotion, !lastCaptureWasKnownChildWindow {
+                pendingMotionSnapshot = pendingMotionSnapshot ?? lastSnapshot
+                scheduleMotionSettleRefreshIfNeeded()
+                return
+            }
             if shouldKeepLastSnapshotDuringTransientMiss() {
                 return
             }
             cancelMotionHiding()
-            if lastSnapshot != nil {
-                lastSnapshot = nil
-                onUpdate?(.hidden)
-            }
+            emitHidden(preserveLastSnapshot: lastCaptureWasKnownChildWindow)
             missingSnapshotGraceUntil = nil
             return
         }
@@ -109,7 +117,7 @@ final class FinderWindowTracker {
         if snapshot != lastSnapshot {
             if let lastSnapshot, snapshot.frame != lastSnapshot.frame {
                 motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
-                if beginMotionHiding(with: snapshot) {
+                if shouldHideForMotionChange(), beginMotionHiding(with: snapshot) {
                     self.lastSnapshot = snapshot
                     updateTimerIfNeeded(finderIsFrontmost: finderIsFrontmost)
                     return
@@ -119,10 +127,12 @@ final class FinderWindowTracker {
             if isTemporarilyHiddenForMotion {
                 pendingMotionSnapshot = snapshot
             } else {
-                onUpdate?(.snapshot(snapshot))
+                emitSnapshot(snapshot)
             }
         } else if isTemporarilyHiddenForMotion {
             pendingMotionSnapshot = snapshot
+        } else if isOverlayHidden {
+            emitSnapshot(snapshot)
         }
 
         updateTimerIfNeeded(finderIsFrontmost: finderIsFrontmost)
@@ -184,6 +194,27 @@ final class FinderWindowTracker {
 
         missingSnapshotGraceUntil = now.addingTimeInterval(missingSnapshotGraceDuration)
         return true
+    }
+
+    private func emitSnapshot(_ snapshot: FinderWindowSnapshot) {
+        isOverlayHidden = false
+        onUpdate?(.snapshot(snapshot))
+    }
+
+    private func emitHidden(preserveLastSnapshot: Bool = false) {
+        if !preserveLastSnapshot {
+            lastSnapshot = nil
+        }
+
+        guard !isOverlayHidden else { return }
+        isOverlayHidden = true
+        onUpdate?(.hidden)
+    }
+
+    private func emitTemporarilyHiddenForMotion() {
+        guard !isOverlayHidden else { return }
+        isOverlayHidden = true
+        onUpdate?(.temporarilyHiddenForMotion)
     }
 
     private func captureSnapshot() -> FinderWindowSnapshot? {
@@ -254,6 +285,10 @@ final class FinderWindowTracker {
 
     private func syncAccessibilityObservation() {
         guard AccessibilityPermissionManager.isTrusted else {
+            if !didPromptForAccessibilityThisRun {
+                didPromptForAccessibilityThisRun = true
+                AccessibilityPermissionManager.ensurePrompted()
+            }
             teardownAccessibilityObservation()
             return
         }
@@ -376,7 +411,9 @@ final class FinderWindowTracker {
         case kAXMovedNotification,
              kAXResizedNotification:
             motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
-            _ = beginMotionHiding()
+            if isTemporarilyHiddenForMotion || shouldHideForMotionChange() {
+                _ = beginMotionHiding()
+            }
             logFinderWindowDiagnostics(reason: notification)
             refreshNow()
             scheduleBurstRefreshes()
@@ -415,7 +452,7 @@ final class FinderWindowTracker {
 
         if !isTemporarilyHiddenForMotion {
             isTemporarilyHiddenForMotion = true
-            onUpdate?(.temporarilyHiddenForMotion)
+            emitTemporarilyHiddenForMotion()
         }
 
         scheduleMotionSettleRefresh()
@@ -431,14 +468,21 @@ final class FinderWindowTracker {
         DispatchQueue.main.asyncAfter(deadline: .now() + motionSettleDelay, execute: workItem)
     }
 
+    private func scheduleMotionSettleRefreshIfNeeded() {
+        guard motionSettleRefresh == nil else { return }
+        scheduleMotionSettleRefresh()
+    }
+
     private func finishMotionHiding() {
         motionSettleRefresh = nil
         guard isTemporarilyHiddenForMotion else { return }
         isTemporarilyHiddenForMotion = false
+        motionTrackingDeadline = nil
+        suppressMotionHidingUntil = Date().addingTimeInterval(motionHidingSuppressionDuration)
 
         if let pendingMotionSnapshot {
             self.pendingMotionSnapshot = nil
-            onUpdate?(.snapshot(pendingMotionSnapshot))
+            emitSnapshot(pendingMotionSnapshot)
         } else {
             refreshNow()
         }
@@ -451,6 +495,20 @@ final class FinderWindowTracker {
         motionSettleRefresh = nil
         pendingMotionSnapshot = nil
         isTemporarilyHiddenForMotion = false
+        suppressMotionHidingUntil = nil
+    }
+
+    private func shouldHideForMotionChange() -> Bool {
+        guard let suppressMotionHidingUntil else {
+            return true
+        }
+
+        if suppressMotionHidingUntil > Date() {
+            return false
+        }
+
+        self.suppressMotionHidingUntil = nil
+        return true
     }
 
     private func logFinderWindowDiagnostics(reason: String) {

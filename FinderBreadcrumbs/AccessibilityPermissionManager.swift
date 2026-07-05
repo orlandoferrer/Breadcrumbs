@@ -4,18 +4,16 @@ import Foundation
 enum AccessibilityPermissionManager {
     static func ensurePrompted() {
         guard !isTrusted else { return }
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        let options = trustOptions(prompt: true)
         AXIsProcessTrustedWithOptions(options)
     }
 
     static var isTrusted: Bool {
-        let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
+        let options = trustOptions(prompt: false)
         return AXIsProcessTrustedWithOptions(options)
     }
 
-    static var appName: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-            ?? "FinderBreadcrumbs"
+    private static func trustOptions(prompt: Bool) -> CFDictionary {
+        ["AXTrustedCheckOptionPrompt": prompt] as CFDictionary
     }
 }
