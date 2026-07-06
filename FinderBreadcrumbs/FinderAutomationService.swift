@@ -13,8 +13,33 @@ protocol FinderAutomationServing {
 }
 
 final class FinderAutomationService: FinderAutomationServing {
+    private lazy var currentStateScript: NSAppleScript? = {
+        let script = NSAppleScript(source: Self.currentStateScriptSource)
+        script?.compileAndReturnError(nil)
+        return script
+    }()
+
     func currentState() -> FinderState? {
-        let script = """
+        guard let response = run(currentStateScript, logErrors: false)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !response.isEmpty else {
+            return nil
+        }
+
+        let lines = response.components(separatedBy: .newlines)
+        guard let windowID = Int(lines.first ?? "") else {
+            return nil
+        }
+
+        let directPath = lines.count >= 2 ? lines[1] : ""
+        let rawDescription = lines.count >= 3 ? lines[2] : ""
+        let path = !directPath.isEmpty ? directPath : parseFinderObjectPath(from: rawDescription)
+        guard let path, !path.isEmpty else { return nil }
+
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return FinderState(displayedPath: path, resolvedPath: resolved, windowID: windowID)
+    }
+
+    private static let currentStateScriptSource = """
         tell application "Finder"
             if not (exists front window) then
                 return ""
@@ -45,25 +70,6 @@ final class FinderAutomationService: FinderAutomationServing {
             return (id of currentWindow as string) & linefeed & targetPath & linefeed & targetDescription
         end tell
         """
-
-        guard let response = run(script: script, logErrors: false)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !response.isEmpty else {
-            return nil
-        }
-
-        let lines = response.components(separatedBy: .newlines)
-        guard let windowID = Int(lines.first ?? "") else {
-            return nil
-        }
-
-        let directPath = lines.count >= 2 ? lines[1] : ""
-        let rawDescription = lines.count >= 3 ? lines[2] : ""
-        let path = !directPath.isEmpty ? directPath : parseFinderObjectPath(from: rawDescription)
-        guard let path, !path.isEmpty else { return nil }
-
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        return FinderState(displayedPath: path, resolvedPath: resolved, windowID: windowID)
-    }
 
     func navigate(to path: String, windowID: Int?) -> Bool {
         let standardized = NSString(string: path).expandingTildeInPath
@@ -106,19 +112,27 @@ final class FinderAutomationService: FinderAutomationServing {
             """
         }
 
-        return run(script: script, logErrors: true) != nil
+        return run(NSAppleScript(source: script), logErrors: true) != nil
     }
 
-    private func run(script: String, logErrors: Bool) -> String? {
+    private var lastQuietErrorNumber: Int?
+
+    private func run(_ appleScript: NSAppleScript?, logErrors: Bool) -> String? {
         var errorInfo: NSDictionary?
-        let appleScript = NSAppleScript(source: script)
         let result = appleScript?.executeAndReturnError(&errorInfo)
-        if errorInfo != nil {
+        if let errorInfo {
+            let errorNumber = errorInfo[NSAppleScript.errorNumber] as? Int
             if logErrors {
-                NSLog("FinderAutomationService AppleScript error: %@", errorInfo ?? [:])
+                NSLog("FinderAutomationService AppleScript error: %@", errorInfo)
+            } else if errorNumber != lastQuietErrorNumber {
+                // Log polling failures once per error code so permission problems
+                // (e.g. Automation consent denied, error -1743) are visible in Console.
+                lastQuietErrorNumber = errorNumber
+                NSLog("FinderAutomationService AppleScript polling error (suppressing repeats): %@", errorInfo)
             }
             return nil
         }
+        lastQuietErrorNumber = nil
         return result?.stringValue
     }
 

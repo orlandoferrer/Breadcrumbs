@@ -1,27 +1,27 @@
 // !$*UTF8*$!
 {
-	objectVersion = 77;
 	archiveVersion = 1;
 	classes = {
 	};
+	objectVersion = 71;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		001 /* FinderBreadcrumbsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101; };
-		002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102; };
-		003 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103; };
-		004 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104; };
-		005 /* AccessibilityPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105; };
-		006 /* FinderAutomationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106; };
-		007 /* FinderWindowTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 107; };
-		008 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108; };
-		009 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109; };
-		00A /* PathBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A; };
-		00B /* PathBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B; };
-		00C /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F; };
-		00D /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110; };
-		00E /* StatusMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111; };
-		00F /* WelcomeWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112; };
+		001 /* FinderBreadcrumbsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101 /* FinderBreadcrumbsApp.swift */; };
+		002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102 /* AppDelegate.swift */; };
+		003 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103 /* AppCoordinator.swift */; };
+		004 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104 /* AppConfig.swift */; };
+		005 /* AccessibilityPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105 /* AccessibilityPermissionManager.swift */; };
+		006 /* FinderAutomationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106 /* FinderAutomationService.swift */; };
+		007 /* FinderWindowTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 107 /* FinderWindowTracker.swift */; };
+		008 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108 /* HotKeyManager.swift */; };
+		009 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* OverlayWindowController.swift */; };
+		00A /* PathBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A /* PathBarView.swift */; };
+		00B /* PathBarViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B /* PathBarViewModel.swift */; };
+		00C /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F /* LoginItemManager.swift */; };
+		00D /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* SettingsWindowController.swift */; };
+		00E /* StatusMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* StatusMenuController.swift */; };
+		00F /* WelcomeWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* WelcomeWindowController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,7 +38,7 @@
 		10A /* PathBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathBarView.swift; sourceTree = "<group>"; };
 		10B /* PathBarViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathBarViewModel.swift; sourceTree = "<group>"; };
 		10C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		10D /* default-config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = default-config.json; sourceTree = "<group>"; };
+		10D /* default-config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "default-config.json"; sourceTree = "<group>"; };
 		10E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		10F /* LoginItemManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemManager.swift; sourceTree = "<group>"; };
 		110 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
@@ -60,50 +60,50 @@
 		300 = {
 			isa = PBXGroup;
 			children = (
-				301,
-				302,
-				303,
-				100,
+				301 /* FinderBreadcrumbs */,
+				302 /* Config */,
+				303 /*  */,
+				100 /* FinderBreadcrumbs.app */,
 			);
 			sourceTree = "<group>";
 		};
-		301 = {
+		301 /* FinderBreadcrumbs */ = {
 			isa = PBXGroup;
 			children = (
-				101,
-				102,
-				103,
-				104,
-				105,
-				106,
-				107,
-				108,
-				10F,
-				109,
-				10A,
-				10B,
-				112,
-				110,
-				111,
-				10C,
+				101 /* FinderBreadcrumbsApp.swift */,
+				102 /* AppDelegate.swift */,
+				103 /* AppCoordinator.swift */,
+				104 /* AppConfig.swift */,
+				105 /* AccessibilityPermissionManager.swift */,
+				106 /* FinderAutomationService.swift */,
+				107 /* FinderWindowTracker.swift */,
+				108 /* HotKeyManager.swift */,
+				10F /* LoginItemManager.swift */,
+				109 /* OverlayWindowController.swift */,
+				10A /* PathBarView.swift */,
+				10B /* PathBarViewModel.swift */,
+				112 /* WelcomeWindowController.swift */,
+				110 /* SettingsWindowController.swift */,
+				111 /* StatusMenuController.swift */,
+				10C /* Info.plist */,
 			);
 			path = FinderBreadcrumbs;
 			sourceTree = "<group>";
 		};
-		302 = {
+		302 /* Config */ = {
 			isa = PBXGroup;
 			children = (
-				10D,
+				10D /* default-config.json */,
 			);
 			path = Config;
 			sourceTree = "<group>";
 		};
-		303 = {
+		303 /*  */ = {
 			isa = PBXGroup;
 			children = (
-				10E,
+				10E /* README.md */,
 			);
-			path = "";
+			name = "";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -111,11 +111,11 @@
 /* Begin PBXNativeTarget section */
 		400 /* FinderBreadcrumbs */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 700;
+			buildConfigurationList = 700 /* Build configuration list for PBXNativeTarget "FinderBreadcrumbs" */;
 			buildPhases = (
-				500,
-				200,
-				501,
+				500 /* Sources */,
+				200 /* Frameworks */,
+				501 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -123,25 +123,25 @@
 			);
 			name = FinderBreadcrumbs;
 			productName = FinderBreadcrumbs;
-			productReference = 100;
+			productReference = 100 /* FinderBreadcrumbs.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		600 = {
+		600 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2600;
-				LastUpgradeCheck = 2600;
+				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					400 = {
 						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
-			buildConfigurationList = 701;
+			buildConfigurationList = 701 /* Build configuration list for PBXProject "FinderBreadcrumbs" */;
 			compatibilityVersion = "Xcode 16.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -154,7 +154,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				400,
+				400 /* FinderBreadcrumbs */,
 			);
 		};
 /* End PBXProject section */
@@ -174,34 +174,36 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				001,
-				002,
-				003,
-				004,
-				005,
-				006,
-				007,
-				008,
-				009,
-				00A,
-				00B,
-				00C,
-				00D,
-				00E,
-				00F,
+				001 /* FinderBreadcrumbsApp.swift in Sources */,
+				002 /* AppDelegate.swift in Sources */,
+				003 /* AppCoordinator.swift in Sources */,
+				004 /* AppConfig.swift in Sources */,
+				005 /* AccessibilityPermissionManager.swift in Sources */,
+				006 /* FinderAutomationService.swift in Sources */,
+				007 /* FinderWindowTracker.swift in Sources */,
+				008 /* HotKeyManager.swift in Sources */,
+				009 /* OverlayWindowController.swift in Sources */,
+				00A /* PathBarView.swift in Sources */,
+				00B /* PathBarViewModel.swift in Sources */,
+				00C /* LoginItemManager.swift in Sources */,
+				00D /* SettingsWindowController.swift in Sources */,
+				00E /* StatusMenuController.swift in Sources */,
+				00F /* WelcomeWindowController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		800 = {
+		800 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FinderBreadcrumbs/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -218,13 +220,15 @@
 			};
 			name = Debug;
 		};
-		801 = {
+		801 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FinderBreadcrumbs/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -241,42 +245,103 @@
 			};
 			name = Release;
 		};
-		802 = {
+		802 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 			};
 			name = Debug;
 		};
-		803 = {
+		803 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		700 = {
+		700 /* Build configuration list for PBXNativeTarget "FinderBreadcrumbs" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				800,
-				801,
+				800 /* Debug */,
+				801 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		701 = {
+		701 /* Build configuration list for PBXProject "FinderBreadcrumbs" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				802,
-				803,
+				802 /* Debug */,
+				803 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = 600;
+	rootObject = 600 /* Project object */;
 }

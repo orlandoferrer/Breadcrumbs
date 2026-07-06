@@ -8,9 +8,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         coordinator = AppCoordinator()
         coordinator?.start()
-        statusMenuController = StatusMenuController { [weak self] in
-            self?.coordinator?.showSettings()
-        }
+        statusMenuController = StatusMenuController(
+            onOpenSettings: { [weak self] in
+                self?.coordinator?.showSettings()
+            },
+            onShowWelcome: { [weak self] in
+                self?.coordinator?.showWelcome()
+            }
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -70,6 +70,12 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
 private struct WelcomeView: View {
     let onDismiss: () -> Void
 
+    @State private var accessibilityState: PermissionState = .unknown
+    @State private var automationState: PermissionState = .unknown
+    @State private var isRequestingAutomation = false
+
+    private let refreshTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
     init(onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
     }
@@ -79,24 +85,34 @@ private struct WelcomeView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Welcome to Breadcrumbs")
                     .font(.title2.weight(.semibold))
-                Text("Breadcrumbs follows Finder windows and lets you jump to folders from a small path bar.")
+                Text("Breadcrumbs follows Finder windows and lets you jump to folders from a small path bar. macOS requires your permission for both parts to work.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            PermissionNote(
+            PermissionStatusRow(
                 symbolName: "folder",
-                title: "Finder access",
-                detail: "macOS may ask before Breadcrumbs can read folders from Finder or open folders on your behalf."
+                title: "Finder automation",
+                detail: "Reads the folder shown in Finder and opens folders you type into the path bar.",
+                state: automationState,
+                actionTitle: automationActionTitle,
+                action: performAutomationAction
             )
 
-            PermissionNote(
+            PermissionStatusRow(
                 symbolName: "accessibility",
                 title: "Accessibility",
-                detail: "macOS may ask before Breadcrumbs can track the active Finder window and place the path bar."
+                detail: "Tracks the active Finder window so the path bar stays attached while it moves.",
+                state: accessibilityState,
+                actionTitle: accessibilityState == .granted ? nil : "Open System Settings",
+                action: { openPrivacyPane("Privacy_Accessibility") }
             )
 
             HStack {
+                Button("Check Again") {
+                    refreshStates()
+                }
+
                 Spacer()
 
                 Button("Continue", action: onDismiss)
@@ -108,13 +124,70 @@ private struct WelcomeView: View {
         .padding(.bottom, 18)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .onAppear {
+            refreshStates()
+        }
+        .onReceive(refreshTimer) { _ in
+            refreshStates()
+        }
+    }
+
+    private var automationActionTitle: String? {
+        switch automationState {
+        case .granted:
+            return nil
+        case .denied:
+            return "Open System Settings"
+        case .notDetermined, .unknown:
+            return isRequestingAutomation ? "Requesting…" : "Request Permission"
+        }
+    }
+
+    private func performAutomationAction() {
+        switch automationState {
+        case .granted:
+            break
+        case .denied:
+            openPrivacyPane("Privacy_Automation")
+        case .notDetermined, .unknown:
+            requestAutomationPermission()
+        }
+    }
+
+    private func requestAutomationPermission() {
+        guard !isRequestingAutomation else { return }
+        isRequestingAutomation = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let state = AutomationPermissionManager.finderAutomationState(promptIfNeeded: true)
+            DispatchQueue.main.async {
+                isRequestingAutomation = false
+                automationState = state
+            }
+        }
+    }
+
+    private func refreshStates() {
+        accessibilityState = AccessibilityPermissionManager.state
+        if !isRequestingAutomation {
+            automationState = AutomationPermissionManager.finderAutomationState()
+        }
+    }
+
+    private func openPrivacyPane(_ pane: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 }
 
-private struct PermissionNote: View {
+private struct PermissionStatusRow: View {
     let symbolName: String
     let title: String
     let detail: String
+    let state: PermissionState
+    let actionTitle: String?
+    let action: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -124,19 +197,77 @@ private struct PermissionNote: View {
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.headline)
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.headline)
+                    statusChip
+                }
 
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let actionTitle {
+                    Button(actionTitle, action: action)
+                        .controlSize(.small)
+                }
             }
+
+            Spacer(minLength: 0)
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
         )
+    }
+
+    private var statusChip: some View {
+        HStack(spacing: 4) {
+            Image(systemName: chipSymbolName)
+            Text(chipText)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(chipColor)
+    }
+
+    private var chipSymbolName: String {
+        switch state {
+        case .granted:
+            return "checkmark.circle.fill"
+        case .denied:
+            return "xmark.circle.fill"
+        case .notDetermined:
+            return "questionmark.circle.fill"
+        case .unknown:
+            return "questionmark.circle"
+        }
+    }
+
+    private var chipText: String {
+        switch state {
+        case .granted:
+            return "Granted"
+        case .denied:
+            return "Not granted"
+        case .notDetermined:
+            return "Not requested yet"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    private var chipColor: Color {
+        switch state {
+        case .granted:
+            return .green
+        case .denied:
+            return .red
+        case .notDetermined:
+            return .orange
+        case .unknown:
+            return .secondary
+        }
     }
 }

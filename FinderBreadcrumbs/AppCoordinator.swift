@@ -27,7 +27,8 @@ final class AppCoordinator {
     func start() {
         showWelcomeIfNeeded()
 
-        viewModel.onEditingEnded = { shouldReturnFocusToFinder in
+        viewModel.onEditingEnded = { [weak self] shouldReturnFocusToFinder in
+            guard let self else { return }
             self.overlayController.endEditing()
             if shouldReturnFocusToFinder {
                 NSRunningApplication
@@ -101,15 +102,30 @@ final class AppCoordinator {
         )
     }
 
-    private func showWelcomeIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: hasSeenWelcomeKey) else { return }
-
+    func showWelcome() {
         welcomeWindowController.show(
             onDismiss: { [weak self] in
                 guard let self else { return }
                 UserDefaults.standard.set(true, forKey: self.hasSeenWelcomeKey)
             }
         )
+    }
+
+    private func showWelcomeIfNeeded() {
+        let hasSeenWelcome = UserDefaults.standard.bool(forKey: hasSeenWelcomeKey)
+        guard !hasSeenWelcome || !arePermissionsGranted else { return }
+        showWelcome()
+    }
+
+    private var arePermissionsGranted: Bool {
+        guard AccessibilityPermissionManager.isTrusted else { return false }
+
+        switch AutomationPermissionManager.finderAutomationState() {
+        case .granted, .unknown:
+            return true
+        case .denied, .notDetermined:
+            return false
+        }
     }
 
     private func beginEditingFromHotKey() {

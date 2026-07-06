@@ -116,11 +116,11 @@ private struct ReadOnlyPathContent: View {
     }
 
     private var breadcrumbSegments: [String]? {
-        let text = viewModel.displayedText
-        guard text != "Finder detected, but the path is unavailable" else { return nil }
-        return text
+        guard case .ready = viewModel.status else { return nil }
+        let segments = viewModel.displayedText
             .split(separator: "/")
             .map(String.init)
+        return segments.isEmpty ? nil : segments
     }
 
     private var primaryTextColor: Color {

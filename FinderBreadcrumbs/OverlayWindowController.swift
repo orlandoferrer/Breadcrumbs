@@ -135,20 +135,14 @@ final class OverlayWindowController {
     }
 
     private func convertWindowServerRectToAppKit(_ rect: CGRect) -> CGRect {
-        guard let screen = screenForWindowServerRect(rect) ?? NSScreen.main else {
+        // CG window coordinates are top-left-origin relative to the primary
+        // screen, so the flip must always use the primary screen's height.
+        guard let primaryScreen = NSScreen.screens.first else {
             return rect
         }
 
-        let screenFrame = screen.frame
-        let convertedY = screenFrame.maxY - rect.origin.y - rect.height
+        let convertedY = primaryScreen.frame.maxY - rect.origin.y - rect.height
         return CGRect(x: rect.origin.x, y: convertedY, width: rect.width, height: rect.height)
-    }
-
-    private func screenForWindowServerRect(_ rect: CGRect) -> NSScreen? {
-        let midpointX = rect.midX
-        return NSScreen.screens.first { screen in
-            midpointX >= screen.frame.minX && midpointX <= screen.frame.maxX
-        }
     }
 
     private func makeRootView() -> PathBarView {

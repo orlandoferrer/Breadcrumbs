@@ -75,20 +75,26 @@ final class PathBarViewModel: ObservableObject {
         }
 
         let autocompleted = completePathIfUnambiguous(candidate) ?? candidate
-        if automationService.navigate(to: autocompleted, windowID: editingWindowID ?? currentState?.windowID) {
+        let normalized = URL(fileURLWithPath: NSString(string: autocompleted).expandingTildeInPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        if automationService.navigate(to: normalized, windowID: editingWindowID ?? currentState?.windowID) {
             isEditing = false
             editingWindowID = nil
-            editingText = autocompleted
+            editingText = normalized
             if var currentState {
                 currentState = FinderState(
-                    displayedPath: autocompleted,
-                    resolvedPath: autocompleted,
+                    displayedPath: normalized,
+                    resolvedPath: normalized,
                     windowID: currentState.windowID
                 )
                 self.currentState = currentState
                 displayedText = formatDisplayText(for: currentState)
             }
             onEditingEnded?(true)
+        } else {
+            NSSound.beep()
         }
     }
 
@@ -98,13 +104,7 @@ final class PathBarViewModel: ObservableObject {
     }
 
     private func formatDisplayText(for state: FinderState) -> String {
-        switch displayMode {
-        case .text:
-            return state.resolvedPath
-        case .breadcrumb:
-            let components = state.resolvedPath.split(separator: "/").map(String.init)
-            return "/" + components.joined(separator: " / ")
-        }
+        state.resolvedPath
     }
 
     private func completePathIfUnambiguous(_ rawInput: String) -> String? {
@@ -119,9 +119,14 @@ final class PathBarViewModel: ObservableObject {
             return nil
         }
 
-        let matches = entries
-            .filter { $0.hasPrefix(fragment) }
-            .sorted()
+        let loweredFragment = fragment.lowercased()
+        let matches = entries.filter { entry in
+            guard entry.lowercased().hasPrefix(loweredFragment) else { return false }
+            var isDirectory: ObjCBool = false
+            let candidatePath = NSString(string: searchDirectory).appendingPathComponent(entry)
+            return FileManager.default.fileExists(atPath: candidatePath, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }
 
         guard matches.count == 1 else {
             return nil

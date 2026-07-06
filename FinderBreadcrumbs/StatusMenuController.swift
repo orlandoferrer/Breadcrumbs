@@ -4,10 +4,12 @@ import AppKit
 final class StatusMenuController: NSObject {
     private let statusItem: NSStatusItem
     private let onOpenSettings: () -> Void
+    private let onShowWelcome: () -> Void
 
-    init(onOpenSettings: @escaping () -> Void) {
+    init(onOpenSettings: @escaping () -> Void, onShowWelcome: @escaping () -> Void) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         self.onOpenSettings = onOpenSettings
+        self.onShowWelcome = onShowWelcome
         super.init()
         configureStatusItem()
     }
@@ -26,6 +28,12 @@ final class StatusMenuController: NSObject {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
+        let welcomeItem = NSMenuItem(title: "Welcome & Permissions…", action: #selector(showWelcome), keyEquivalent: "")
+        welcomeItem.target = self
+        menu.addItem(welcomeItem)
+
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "Quit Breadcrumbs", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -35,6 +43,10 @@ final class StatusMenuController: NSObject {
 
     @objc private func openSettings() {
         onOpenSettings()
+    }
+
+    @objc private func showWelcome() {
+        onShowWelcome()
     }
 
     @objc private func quit() {

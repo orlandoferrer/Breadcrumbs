@@ -62,6 +62,10 @@ final class HotKeyManager {
         self.registrar = registrar
     }
 
+    deinit {
+        unregister()
+    }
+
     @discardableResult
     func register(shortcut: AppConfig.Shortcut) -> OSStatus {
         unregister()

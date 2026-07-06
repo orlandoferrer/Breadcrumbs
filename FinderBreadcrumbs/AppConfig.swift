@@ -310,6 +310,11 @@ enum AppConfigLoader {
         do {
             return try JSONDecoder().decode(AppConfig.self, from: data)
         } catch {
+            NSLog(
+                "FinderBreadcrumbs could not decode config at %@, using defaults: %@",
+                url.path,
+                String(describing: error)
+            )
             return .default
         }
     }
