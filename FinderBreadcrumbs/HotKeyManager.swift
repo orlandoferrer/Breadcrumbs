@@ -56,6 +56,7 @@ final class HotKeyManager {
     private let registrar: HotKeyRegistering
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
+    private var registeredShortcut: AppConfig.Shortcut?
     private static let registeredHotKeyID: UInt32 = 1
 
     init(registrar: HotKeyRegistering = CarbonHotKeyRegistrar()) {
@@ -67,8 +68,22 @@ final class HotKeyManager {
     }
 
     @discardableResult
+    func setRegistrationEnabled(_ isEnabled: Bool, shortcut: AppConfig.Shortcut) -> OSStatus {
+        guard isEnabled else {
+            deactivate()
+            return noErr
+        }
+
+        return register(shortcut: shortcut)
+    }
+
+    @discardableResult
     func register(shortcut: AppConfig.Shortcut) -> OSStatus {
-        unregister()
+        if hotKeyRef != nil, registeredShortcut == shortcut {
+            return noErr
+        }
+
+        deactivate()
 
         let eventHotKeyID = EventHotKeyID(signature: OSType(0x46425244), id: Self.registeredHotKeyID)
         let registerStatus = registrar.register(
@@ -82,25 +97,38 @@ final class HotKeyManager {
             return registerStatus
         }
 
-        var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let handlerStatus = registrar.installHandler(
-            target: GetApplicationEventTarget(),
-            handler: hotKeyEventHandler,
-            eventSpec: &eventSpec,
-            userData: Unmanaged.passUnretained(self).toOpaque(),
-            eventHandlerRef: &eventHandlerRef
-        )
-        if handlerStatus != noErr {
-            unregister()
+        if eventHandlerRef == nil {
+            var eventSpec = EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyPressed)
+            )
+            let handlerStatus = registrar.installHandler(
+                target: GetApplicationEventTarget(),
+                handler: hotKeyEventHandler,
+                eventSpec: &eventSpec,
+                userData: Unmanaged.passUnretained(self).toOpaque(),
+                eventHandlerRef: &eventHandlerRef
+            )
+            guard handlerStatus == noErr else {
+                deactivate()
+                return handlerStatus
+            }
         }
-        return handlerStatus
+
+        registeredShortcut = shortcut
+        return noErr
     }
 
-    func unregister() {
+    func deactivate() {
         if let hotKeyRef {
             _ = registrar.unregister(hotKeyRef)
             self.hotKeyRef = nil
         }
+        registeredShortcut = nil
+    }
+
+    func unregister() {
+        deactivate()
         if let eventHandlerRef {
             _ = registrar.removeHandler(eventHandlerRef)
             self.eventHandlerRef = nil

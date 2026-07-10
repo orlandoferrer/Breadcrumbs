@@ -12,9 +12,10 @@ final class AppCoordinator {
     private let hotKeyManager = HotKeyManager()
     private let settingsWindowController = SettingsWindowController()
     private let welcomeWindowController = WelcomeWindowController()
-    private var workspaceObserver: NSObjectProtocol?
+    private var workspaceObservers: [NSObjectProtocol] = []
     private var isHotKeyEditingAttemptInProgress = false
     private let hasSeenWelcomeKey = "hasSeenWelcome"
+    private let finderBundleIdentifier = "com.apple.finder"
 
     init(config: AppConfig = AppConfigLoader.load(), automationService: FinderAutomationServing = FinderAutomationService()) {
         self.config = config
@@ -43,7 +44,6 @@ final class AppCoordinator {
             guard self.canBeginEditingFromHotKey else { return }
             self.beginEditingFromHotKey()
         }
-        registerHotKey(config.shortcut)
         tracker.shouldRemainVisible = { [weak self] in
             guard let self else { return false }
             let isActivelyEditingHere = self.viewModel.isEditing && NSApp.isActive
@@ -65,23 +65,40 @@ final class AppCoordinator {
             }
         }
 
-        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        let activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.handleActivatedApplicationChange()
             }
         }
+        workspaceObservers.append(activationObserver)
+
+        let deactivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didDeactivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let bundleIdentifier = (
+                notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            )?.bundleIdentifier
+            MainActor.assumeIsolated {
+                self?.handleDeactivatedApplicationChange(bundleIdentifier: bundleIdentifier)
+            }
+        }
+        workspaceObservers.append(deactivationObserver)
+
+        syncHotKeyRegistration()
         tracker.start()
     }
 
     func stop() {
-        if let workspaceObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
-            self.workspaceObserver = nil
+        for observer in workspaceObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
+        workspaceObservers.removeAll()
         tracker.stop()
         hotKeyManager.unregister()
     }
@@ -148,12 +165,7 @@ final class AppCoordinator {
     }
 
     private var canBeginEditingFromHotKey: Bool {
-        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        if frontmostBundleID == "com.apple.finder" {
-            return true
-        }
-
-        return frontmostBundleID == Bundle.main.bundleIdentifier && overlayController.isVisible
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finderBundleIdentifier
     }
 
     private var shouldKeepOverlayVisible: Bool {
@@ -164,8 +176,10 @@ final class AppCoordinator {
 
     private func handleActivatedApplicationChange() {
         let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let isFinderFrontmost = frontmostBundleID == "com.apple.finder"
+        let isFinderFrontmost = frontmostBundleID == finderBundleIdentifier
         let isEditingHere = viewModel.isEditing && NSApp.isActive
+
+        syncHotKeyRegistration(frontmostBundleIdentifier: frontmostBundleID)
 
         if isFinderFrontmost {
             tracker.refreshNow()
@@ -183,6 +197,11 @@ final class AppCoordinator {
         overlayController.cancelEditingAndHide(returnFocusToFinder: false)
     }
 
+    private func handleDeactivatedApplicationChange(bundleIdentifier: String?) {
+        guard bundleIdentifier == finderBundleIdentifier else { return }
+        hotKeyManager.deactivate()
+    }
+
     private func applySettings(_ draft: AppSettingsDraft) -> String? {
         do {
             try LoginItemManager.setEnabled(draft.launchAtLogin)
@@ -195,16 +214,21 @@ final class AppCoordinator {
         updatedConfig.shortcut = draft.shortcut
         updatedConfig.displayMode = draft.displayMode
 
-        let registrationStatus = hotKeyManager.register(shortcut: updatedConfig.shortcut)
-        guard registrationStatus == noErr else {
-            registerHotKey(config.shortcut)
-            return "Could not register keyboard shortcut: OSStatus \(registrationStatus)"
+        let finderIsFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finderBundleIdentifier
+        if finderIsFrontmost {
+            let registrationStatus = hotKeyManager.register(shortcut: updatedConfig.shortcut)
+            guard registrationStatus == noErr else {
+                registerHotKey(config.shortcut)
+                return "Could not register keyboard shortcut: OSStatus \(registrationStatus)"
+            }
         }
 
         do {
             try AppConfigLoader.save(updatedConfig)
         } catch {
-            registerHotKey(config.shortcut)
+            if finderIsFrontmost {
+                registerHotKey(config.shortcut)
+            }
             return "Could not save settings: \(error.localizedDescription)"
         }
 
@@ -218,6 +242,18 @@ final class AppCoordinator {
 
         tracker.refreshNow()
         return nil
+    }
+
+    private func syncHotKeyRegistration(frontmostBundleIdentifier: String? = nil) {
+        let bundleIdentifier = frontmostBundleIdentifier
+            ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let status = hotKeyManager.setRegistrationEnabled(
+            bundleIdentifier == finderBundleIdentifier,
+            shortcut: config.shortcut
+        )
+        if status != noErr {
+            NSLog("FinderBreadcrumbs failed to register hotkey %@: OSStatus %d", config.shortcut.description, status)
+        }
     }
 
     private func registerHotKey(_ shortcut: AppConfig.Shortcut) {

@@ -23,6 +23,10 @@ struct EditingFocusRegressionTests {
         testHotKeyRegistrationReturnsRegisterFailure()
         testHotKeyRegistrationReturnsHandlerFailureAndCleansUp()
         testHotKeyRegistrationSuccessInstallsHandler()
+        testInactiveHotKeyDoesNotRegister()
+        testRepeatedFinderActivationIsIdempotent()
+        testFinderDeactivationReleasesOnlyHotKey()
+        testReturningToFinderReusesInstalledHandler()
     }
 
     @MainActor
@@ -292,6 +296,52 @@ struct EditingFocusRegressionTests {
         expect(status == noErr, "HotKeyManager should return noErr after successful registration.")
         expect(registrar.registerCalls == 1, "Expected one hotkey registration call.")
         expect(registrar.installHandlerCalls == 1, "Expected one handler installation call.")
+    }
+
+    private static func testInactiveHotKeyDoesNotRegister() {
+        let registrar = MockHotKeyRegistrar()
+        let manager = HotKeyManager(registrar: registrar)
+        let status = manager.setRegistrationEnabled(false, shortcut: AppConfig.Shortcut.default)
+
+        expect(status == noErr, "Disabling an inactive hotkey should succeed.")
+        expect(registrar.registerCalls == 0, "The shortcut must not be reserved while Finder is inactive.")
+        expect(registrar.installHandlerCalls == 0, "Inactive startup should not install a hotkey handler.")
+    }
+
+    private static func testRepeatedFinderActivationIsIdempotent() {
+        let registrar = MockHotKeyRegistrar()
+        let manager = HotKeyManager(registrar: registrar)
+
+        _ = manager.setRegistrationEnabled(true, shortcut: AppConfig.Shortcut.default)
+        _ = manager.setRegistrationEnabled(true, shortcut: AppConfig.Shortcut.default)
+
+        expect(registrar.registerCalls == 1, "Repeated Finder activation must not reserve the shortcut twice.")
+        expect(registrar.installHandlerCalls == 1, "Repeated Finder activation must not install duplicate handlers.")
+        expect(registrar.unregisterCalls == 0, "An unchanged active shortcut should remain registered.")
+    }
+
+    private static func testFinderDeactivationReleasesOnlyHotKey() {
+        let registrar = MockHotKeyRegistrar()
+        let manager = HotKeyManager(registrar: registrar)
+
+        _ = manager.setRegistrationEnabled(true, shortcut: AppConfig.Shortcut.default)
+        _ = manager.setRegistrationEnabled(false, shortcut: AppConfig.Shortcut.default)
+
+        expect(registrar.unregisterCalls == 1, "Finder deactivation must release the global shortcut immediately.")
+        expect(registrar.removeHandlerCalls == 0, "Finder deactivation should keep the reusable event handler installed.")
+    }
+
+    private static func testReturningToFinderReusesInstalledHandler() {
+        let registrar = MockHotKeyRegistrar()
+        let manager = HotKeyManager(registrar: registrar)
+
+        _ = manager.setRegistrationEnabled(true, shortcut: AppConfig.Shortcut.default)
+        _ = manager.setRegistrationEnabled(false, shortcut: AppConfig.Shortcut.default)
+        _ = manager.setRegistrationEnabled(true, shortcut: AppConfig.Shortcut.default)
+
+        expect(registrar.registerCalls == 2, "Returning to Finder should reserve the shortcut again.")
+        expect(registrar.unregisterCalls == 1, "Only the Finder deactivation should release the shortcut.")
+        expect(registrar.installHandlerCalls == 1, "Returning to Finder should reuse the existing event handler.")
     }
 
     private static func decodeShortcut(from json: String) -> AppConfig.Shortcut {
