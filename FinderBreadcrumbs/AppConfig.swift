@@ -287,7 +287,7 @@ struct AppConfig: Codable {
         motionTrackingDuration: 0.75,
         inactivePollInterval: 1.5,
         horizontalInset: 8,
-        verticalGap: -6,
+        verticalGap: 0,
         preferredBarHeight: 34,
         shortcut: .default,
         debugLogFinderWindowDiagnostics: false

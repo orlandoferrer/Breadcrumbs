@@ -9,5 +9,5 @@
   "motionTrackingDuration" : 0.75,
   "preferredBarHeight" : 34,
   "shortcut" : "cmd+option+l",
-  "verticalGap" : -6
+  "verticalGap" : 0
 }

@@ -126,7 +126,7 @@ final class OverlayWindowController {
 
     private func frame(for finderFrame: CGRect, config: AppConfig) -> NSRect {
         let convertedFinderFrame = convertWindowServerRectToAppKit(finderFrame)
-        let proportionalInset = convertedFinderFrame.width * 0.02
+        let proportionalInset = convertedFinderFrame.width * 0.04
         let sideInset = config.horizontalInset + proportionalInset
         let width = max(320, convertedFinderFrame.width - (sideInset * 2))
         let x = convertedFinderFrame.origin.x + sideInset
