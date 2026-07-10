@@ -17,10 +17,14 @@ final class AppCoordinator {
     private let hasSeenWelcomeKey = "hasSeenWelcome"
     private let finderBundleIdentifier = "com.apple.finder"
 
-    init(config: AppConfig = AppConfigLoader.load(), automationService: FinderAutomationServing = FinderAutomationService()) {
+    init(
+        config: AppConfig = AppConfigLoader.load(),
+        automationService: FinderAutomationServing = FinderAutomationService(),
+        trackingAutomationService: FinderAutomationServing = FinderAutomationService()
+    ) {
         self.config = config
         self.automationService = automationService
-        self.tracker = FinderWindowTracker(config: config, automationService: automationService)
+        self.tracker = FinderWindowTracker(config: config, automationService: trackingAutomationService)
         self.viewModel = PathBarViewModel(displayMode: config.displayMode, automationService: automationService)
         self.overlayController = OverlayWindowController(viewModel: viewModel)
     }
@@ -57,7 +61,6 @@ final class AppCoordinator {
                 self.viewModel.update(state: snapshot.state, displayMode: self.config.displayMode)
                 self.overlayController.update(with: snapshot, config: self.config)
             case .temporarilyHiddenForMotion:
-                guard !self.shouldKeepOverlayVisible else { return }
                 self.overlayController.hide()
             case .hidden:
                 guard !self.shouldKeepOverlayVisible else { return }

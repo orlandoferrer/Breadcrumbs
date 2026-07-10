@@ -23,7 +23,9 @@ struct EditingFocusRegressionTests {
         testNavigationAcceptsNonTextAppleScriptResult()
         testFinderStateRefreshCacheThrottlesMotionPolling()
         testFinderPollReentrancyIsCoalesced()
-        testAccessibilityResizeBypassesPollSuppression()
+        testLiveResizeBypassesPollSuppression()
+        testMotionHidingWaitsForMouseRelease()
+        testFinderResizeBorderHitTesting()
         testHotKeyRegistrationReturnsRegisterFailure()
         testHotKeyRegistrationReturnsHandlerFailureAndCleansUp()
         testHotKeyRegistrationSuccessInstallsHandler()
@@ -323,17 +325,25 @@ struct EditingFocusRegressionTests {
         expect(loadCount == 3, "Explicit refreshes must bypass the path-state cache.")
     }
 
-    private static func testAccessibilityResizeBypassesPollSuppression() {
+    private static func testLiveResizeBypassesPollSuppression() {
         let now = Date(timeIntervalSinceReferenceDate: 1_000)
         let suppressionDeadline = now.addingTimeInterval(0.35)
 
         expect(
             !FinderMotionHidingPolicy.shouldHide(
-                source: .polledFrame,
+                source: .polledMove,
                 suppressionDeadline: suppressionDeadline,
                 now: now
             ),
-            "Late polled frame changes should remain suppressed while the bar settles."
+            "Late polled position changes should remain suppressed while the bar settles."
+        )
+        expect(
+            FinderMotionHidingPolicy.shouldHide(
+                source: .polledResize,
+                suppressionDeadline: suppressionDeadline,
+                now: now
+            ),
+            "A polled size change must hide the bar throughout a live Finder resize."
         )
         expect(
             FinderMotionHidingPolicy.shouldHide(
@@ -342,6 +352,42 @@ struct EditingFocusRegressionTests {
                 now: now
             ),
             "An explicit Accessibility resize must hide the bar even during poll suppression."
+        )
+    }
+
+    private static func testMotionHidingWaitsForMouseRelease() {
+        expect(
+            !FinderMotionCompletionPolicy.shouldFinish(isResizeDragInProgress: true),
+            "The bar must remain hidden while the Finder move or resize drag is active."
+        )
+        expect(
+            FinderMotionCompletionPolicy.shouldFinish(isResizeDragInProgress: false),
+            "The bar may reappear after the Finder move or resize drag is released."
+        )
+    }
+
+    private static func testFinderResizeBorderHitTesting() {
+        let frame = CGRect(x: 100, y: 100, width: 800, height: 600)
+
+        expect(
+            FinderResizeHitTester.isResizeBorderHit(point: CGPoint(x: 898, y: 698), frame: frame),
+            "A Finder window corner should begin resize hiding immediately."
+        )
+        expect(
+            FinderResizeHitTester.isResizeBorderHit(point: CGPoint(x: 116, y: 116), frame: frame),
+            "Finder's rounded upper corners should use the wider corner hit zone."
+        )
+        expect(
+            FinderResizeHitTester.isResizeBorderHit(point: CGPoint(x: 500, y: 699), frame: frame),
+            "A Finder window edge should begin resize hiding immediately."
+        )
+        expect(
+            !FinderResizeHitTester.isResizeBorderHit(point: CGPoint(x: 130, y: 130), frame: frame),
+            "The wider corner hit zone must not extend into ordinary Finder content."
+        )
+        expect(
+            !FinderResizeHitTester.isResizeBorderHit(point: CGPoint(x: 500, y: 400), frame: frame),
+            "A click inside Finder content must not be mistaken for a resize drag."
         )
     }
 
@@ -452,7 +498,7 @@ struct EditingFocusRegressionTests {
     }
 }
 
-private final class MockFinderAutomationService: FinderAutomationServing {
+private final class MockFinderAutomationService: FinderAutomationServing, @unchecked Sendable {
     func currentState() -> FinderState? {
         nil
     }
@@ -462,7 +508,7 @@ private final class MockFinderAutomationService: FinderAutomationServing {
     }
 }
 
-private final class RecordingFinderAutomationService: FinderAutomationServing {
+private final class RecordingFinderAutomationService: FinderAutomationServing, @unchecked Sendable {
     var navigateRequests: [(path: String, windowID: Int?)] = []
 
     func currentState() -> FinderState? {

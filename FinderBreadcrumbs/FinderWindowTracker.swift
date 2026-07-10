@@ -16,7 +16,8 @@ enum FinderWindowTrackerUpdate: Equatable {
 
 enum FinderMotionChangeSource {
     case accessibilityNotification
-    case polledFrame
+    case polledMove
+    case polledResize
 }
 
 enum FinderMotionHidingPolicy {
@@ -26,12 +27,45 @@ enum FinderMotionHidingPolicy {
         now: Date
     ) -> Bool {
         switch source {
-        case .accessibilityNotification:
+        case .accessibilityNotification, .polledResize:
             return true
-        case .polledFrame:
+        case .polledMove:
             guard let suppressionDeadline else { return true }
             return suppressionDeadline <= now
         }
+    }
+}
+
+enum FinderMotionCompletionPolicy {
+    static func shouldFinish(isResizeDragInProgress: Bool) -> Bool {
+        !isResizeDragInProgress
+    }
+}
+
+enum FinderResizeHitTester {
+    static func isResizeBorderHit(
+        point: CGPoint,
+        frame: CGRect,
+        edgeTolerance: CGFloat = 8,
+        cornerTolerance: CGFloat = 20
+    ) -> Bool {
+        let expandedFrame = frame.insetBy(dx: -cornerTolerance, dy: -cornerTolerance)
+        guard expandedFrame.contains(point) else { return false }
+
+        let distanceToHorizontalEdge = min(
+            abs(point.x - frame.minX),
+            abs(point.x - frame.maxX)
+        )
+        let distanceToVerticalEdge = min(
+            abs(point.y - frame.minY),
+            abs(point.y - frame.maxY)
+        )
+        let isRoundedCornerHit = distanceToHorizontalEdge <= cornerTolerance
+            && distanceToVerticalEdge <= cornerTolerance
+
+        return isRoundedCornerHit
+            || distanceToHorizontalEdge <= edgeTolerance
+            || distanceToVerticalEdge <= edgeTolerance
     }
 }
 
@@ -85,15 +119,21 @@ struct FinderPollReentrancyGate {
     }
 }
 
-final class FinderWindowTracker {
+final class FinderWindowTracker: @unchecked Sendable {
     var onUpdate: ((FinderWindowTrackerUpdate) -> Void)?
     var shouldRemainVisible: (() -> Bool)?
 
     private let config: AppConfig
     private let automationService: FinderAutomationServing
+    private let stateRefreshQueue = DispatchQueue(
+        label: "com.orlando.FinderBreadcrumbs.finder-state-refresh",
+        qos: .utility
+    )
     private var timer: Timer?
     private var lastSnapshot: FinderWindowSnapshot?
     private var stateRefreshCache = FinderStateRefreshCache()
+    private var isStateRefreshInFlight = false
+    private var hasPendingForcedStateRefresh = false
     private var pollReentrancyGate = FinderPollReentrancyGate()
     private var isUsingActiveInterval = false
     private var currentInterval: TimeInterval?
@@ -102,6 +142,8 @@ final class FinderWindowTracker {
     private var finderObservedPID: pid_t?
     private var observedAppElement: AXUIElement?
     private var observedWindowElement: AXUIElement?
+    private var globalMouseMonitor: Any?
+    private var isResizeDragInProgress = false
     private var pendingBurstRefreshes: [DispatchWorkItem] = []
     private var motionSettleRefresh: DispatchWorkItem?
     private var pendingMotionSnapshot: FinderWindowSnapshot?
@@ -122,6 +164,7 @@ final class FinderWindowTracker {
     }
 
     func start() {
+        installGlobalMouseMonitor()
         rescheduleTimer(finderIsFrontmost: isFinderFrontmost())
     }
 
@@ -130,6 +173,7 @@ final class FinderWindowTracker {
         timer = nil
         cancelBurstRefreshes()
         cancelMotionHiding()
+        removeGlobalMouseMonitor()
         teardownAccessibilityObservation()
     }
 
@@ -212,7 +256,10 @@ final class FinderWindowTracker {
         if snapshot != lastSnapshot {
             if let lastSnapshot, snapshot.frame != lastSnapshot.frame {
                 motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
-                if shouldHideForPolledMotionChange(), beginMotionHiding(with: snapshot) {
+                let changeSource: FinderMotionChangeSource =
+                    snapshot.frame.size == lastSnapshot.frame.size ? .polledMove : .polledResize
+                if shouldHideForPolledMotionChange(source: changeSource) {
+                    beginMotionHiding(with: snapshot)
                     self.lastSnapshot = snapshot
                     updateTimerIfNeeded(finderIsFrontmost: finderIsFrontmost)
                     return
@@ -331,8 +378,7 @@ final class FinderWindowTracker {
             minimumInterval: config.activePollInterval,
             forceRefresh: forceFinderStateRefresh
         ) {
-            let refreshedState = automationService.currentState()
-            stateRefreshCache.store(refreshedState, refreshedAt: now)
+            requestStateRefresh(forceRefresh: forceFinderStateRefresh)
         }
 
         let state = stateRefreshCache.state
@@ -356,6 +402,35 @@ final class FinderWindowTracker {
             lastCaptureWasKnownChildWindow = true
         }
         return nil
+    }
+
+    private func requestStateRefresh(forceRefresh: Bool) {
+        guard !isStateRefreshInFlight else {
+            hasPendingForcedStateRefresh = hasPendingForcedStateRefresh || forceRefresh
+            return
+        }
+
+        isStateRefreshInFlight = true
+        let automationService = automationService
+        stateRefreshQueue.async { [weak self] in
+            let state = automationService.currentState()
+            DispatchQueue.main.async { [weak self] in
+                self?.completeStateRefresh(state)
+            }
+        }
+    }
+
+    private func completeStateRefresh(_ state: FinderState?) {
+        stateRefreshCache.store(state, refreshedAt: Date())
+        isStateRefreshInFlight = false
+
+        if hasPendingForcedStateRefresh {
+            hasPendingForcedStateRefresh = false
+            requestStateRefresh(forceRefresh: true)
+            return
+        }
+
+        performPoll(forceFinderStateRefresh: false)
     }
 
     private func frontmostWindowInfo(for processID: pid_t) -> FinderCGWindowInfo? {
@@ -388,6 +463,49 @@ final class FinderWindowTracker {
 
     private func isFinderFrontmost() -> Bool {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
+    }
+
+    private func installGlobalMouseMonitor() {
+        guard globalMouseMonitor == nil else { return }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseUp]
+        ) { [weak self] event in
+            self?.handleGlobalMouseEvent(event)
+        }
+    }
+
+    private func removeGlobalMouseMonitor() {
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
+        }
+        isResizeDragInProgress = false
+    }
+
+    private func handleGlobalMouseEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            guard isFinderFrontmost(), let lastSnapshot else { return }
+            let mousePoint = windowServerPoint(fromAppKitPoint: NSEvent.mouseLocation)
+            guard FinderResizeHitTester.isResizeBorderHit(
+                point: mousePoint,
+                frame: lastSnapshot.frame
+            ) else { return }
+
+            isResizeDragInProgress = true
+            beginMotionHiding(with: lastSnapshot)
+        case .leftMouseUp:
+            guard isResizeDragInProgress else { return }
+            isResizeDragInProgress = false
+            scheduleMotionSettleRefresh()
+        default:
+            break
+        }
+    }
+
+    private func windowServerPoint(fromAppKitPoint point: CGPoint) -> CGPoint {
+        guard let primaryScreen = NSScreen.screens.first else { return point }
+        return CGPoint(x: point.x, y: primaryScreen.frame.maxY - point.y)
     }
 
     private func syncAccessibilityObservation() {
@@ -523,7 +641,7 @@ final class FinderWindowTracker {
                 suppressionDeadline: suppressMotionHidingUntil,
                 now: Date()
             ) {
-                _ = beginMotionHiding()
+                beginMotionHiding()
             }
             logFinderWindowDiagnostics(reason: notification)
             refreshFrameNow()
@@ -551,12 +669,7 @@ final class FinderWindowTracker {
         pendingBurstRefreshes.removeAll()
     }
 
-    private func beginMotionHiding(with snapshot: FinderWindowSnapshot? = nil) -> Bool {
-        guard shouldRemainVisible?() != true else {
-            cancelMotionHiding()
-            return false
-        }
-
+    private func beginMotionHiding(with snapshot: FinderWindowSnapshot? = nil) {
         if let snapshot {
             pendingMotionSnapshot = snapshot
         }
@@ -567,7 +680,6 @@ final class FinderWindowTracker {
         }
 
         scheduleMotionSettleRefresh()
-        return true
     }
 
     private func scheduleMotionSettleRefresh() {
@@ -587,6 +699,12 @@ final class FinderWindowTracker {
     private func finishMotionHiding() {
         motionSettleRefresh = nil
         guard isTemporarilyHiddenForMotion else { return }
+        guard FinderMotionCompletionPolicy.shouldFinish(
+            isResizeDragInProgress: isResizeDragInProgress
+        ) else {
+            scheduleMotionSettleRefresh()
+            return
+        }
         isTemporarilyHiddenForMotion = false
         motionTrackingDeadline = nil
         suppressMotionHidingUntil = Date().addingTimeInterval(motionHidingSuppressionDuration)
@@ -609,10 +727,10 @@ final class FinderWindowTracker {
         suppressMotionHidingUntil = nil
     }
 
-    private func shouldHideForPolledMotionChange() -> Bool {
+    private func shouldHideForPolledMotionChange(source: FinderMotionChangeSource) -> Bool {
         let now = Date()
         let shouldHide = FinderMotionHidingPolicy.shouldHide(
-            source: .polledFrame,
+            source: source,
             suppressionDeadline: suppressMotionHidingUntil,
             now: now
         )
@@ -633,7 +751,7 @@ final class FinderWindowTracker {
 
         let cgInfo = frontmostWindowInfo(for: finderPID)
         let axInfo = focusedWindowDiagnostics(for: finderPID)
-        let state = automationService.currentState()
+        let state = stateRefreshCache.state
         let signature = [
             cgInfo?.signature ?? "cg:nil",
             axInfo?.signature ?? "ax:nil",

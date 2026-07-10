@@ -7,7 +7,7 @@ struct FinderState: Equatable {
     var windowID: Int
 }
 
-protocol FinderAutomationServing {
+protocol FinderAutomationServing: AnyObject, Sendable {
     func currentState() -> FinderState?
     func navigate(to path: String, windowID: Int?) -> Bool
 }
@@ -22,7 +22,7 @@ struct SystemAppleScriptExecutor: AppleScriptExecuting {
     }
 }
 
-final class FinderAutomationService: FinderAutomationServing {
+final class FinderAutomationService: FinderAutomationServing, @unchecked Sendable {
     private let scriptExecutor: AppleScriptExecuting
 
     private lazy var currentStateScript: NSAppleScript? = {
