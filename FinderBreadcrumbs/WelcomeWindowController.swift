@@ -95,6 +95,7 @@ private struct WelcomeView: View {
                 title: "Finder automation",
                 detail: "Reads the folder shown in Finder and opens folders you type into the path bar.",
                 state: automationState,
+                deniedAppearance: .notGranted,
                 actionTitle: automationActionTitle,
                 action: performAutomationAction
             )
@@ -104,6 +105,7 @@ private struct WelcomeView: View {
                 title: "Accessibility",
                 detail: "Tracks the active Finder window so the path bar stays attached while it moves.",
                 state: accessibilityState,
+                deniedAppearance: .limited,
                 actionTitle: accessibilityState == .granted ? nil : "Open System Settings",
                 action: { openPrivacyPane("Privacy_Accessibility") }
             )
@@ -186,6 +188,7 @@ private struct PermissionStatusRow: View {
     let title: String
     let detail: String
     let state: PermissionState
+    let deniedAppearance: DeniedPermissionAppearance
     let actionTitle: String?
     let action: () -> Void
 
@@ -237,7 +240,7 @@ private struct PermissionStatusRow: View {
         case .granted:
             return "checkmark.circle.fill"
         case .denied:
-            return "xmark.circle.fill"
+            return deniedAppearance.symbolName
         case .notDetermined:
             return "questionmark.circle.fill"
         case .unknown:
@@ -250,7 +253,7 @@ private struct PermissionStatusRow: View {
         case .granted:
             return "Granted"
         case .denied:
-            return "Not granted"
+            return deniedAppearance.text
         case .notDetermined:
             return "Not requested yet"
         case .unknown:
@@ -263,11 +266,43 @@ private struct PermissionStatusRow: View {
         case .granted:
             return .green
         case .denied:
-            return .red
+            return deniedAppearance.color
         case .notDetermined:
             return .orange
         case .unknown:
             return .secondary
+        }
+    }
+}
+
+private enum DeniedPermissionAppearance {
+    case notGranted
+    case limited
+
+    var symbolName: String {
+        switch self {
+        case .notGranted:
+            return "xmark.circle.fill"
+        case .limited:
+            return "exclamationmark.circle.fill"
+        }
+    }
+
+    var text: String {
+        switch self {
+        case .notGranted:
+            return "Not granted"
+        case .limited:
+            return "Limited"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .notGranted:
+            return .red
+        case .limited:
+            return .orange
         }
     }
 }
