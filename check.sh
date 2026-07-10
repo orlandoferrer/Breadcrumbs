@@ -16,7 +16,9 @@ swiftc \
 swiftc \
   -module-cache-path "$MODULE_CACHE" \
   FinderBreadcrumbs/AppConfig.swift \
+  FinderBreadcrumbs/AccessibilityPermissionManager.swift \
   FinderBreadcrumbs/FinderAutomationService.swift \
+  FinderBreadcrumbs/FinderWindowTracker.swift \
   FinderBreadcrumbs/HotKeyManager.swift \
   FinderBreadcrumbs/PathBarView.swift \
   FinderBreadcrumbs/PathBarViewModel.swift \

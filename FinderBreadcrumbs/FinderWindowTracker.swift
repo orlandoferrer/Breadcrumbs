@@ -14,6 +14,77 @@ enum FinderWindowTrackerUpdate: Equatable {
     case temporarilyHiddenForMotion
 }
 
+enum FinderMotionChangeSource {
+    case accessibilityNotification
+    case polledFrame
+}
+
+enum FinderMotionHidingPolicy {
+    static func shouldHide(
+        source: FinderMotionChangeSource,
+        suppressionDeadline: Date?,
+        now: Date
+    ) -> Bool {
+        switch source {
+        case .accessibilityNotification:
+            return true
+        case .polledFrame:
+            guard let suppressionDeadline else { return true }
+            return suppressionDeadline <= now
+        }
+    }
+}
+
+struct FinderStateRefreshCache {
+    private var cachedState: FinderState?
+    private var lastRefreshDate: Date?
+
+    var state: FinderState? {
+        cachedState
+    }
+
+    func shouldRefresh(
+        now: Date,
+        minimumInterval: TimeInterval,
+        forceRefresh: Bool
+    ) -> Bool {
+        let cacheExpired = lastRefreshDate.map {
+            now.timeIntervalSince($0) >= minimumInterval
+        } ?? true
+        return forceRefresh || cacheExpired
+    }
+
+    mutating func store(_ state: FinderState?, refreshedAt date: Date) {
+        cachedState = state
+        lastRefreshDate = date
+    }
+}
+
+struct FinderPollReentrancyGate {
+    private var isActive = false
+    private var hasPendingPoll = false
+    private var pendingForceRefresh = false
+
+    mutating func begin(forceRefresh: Bool) -> Bool {
+        guard !isActive else {
+            hasPendingPoll = true
+            pendingForceRefresh = pendingForceRefresh || forceRefresh
+            return false
+        }
+
+        isActive = true
+        return true
+    }
+
+    mutating func finish() -> (shouldPoll: Bool, forceRefresh: Bool) {
+        isActive = false
+        let pending = (hasPendingPoll, pendingForceRefresh)
+        hasPendingPoll = false
+        pendingForceRefresh = false
+        return pending
+    }
+}
+
 final class FinderWindowTracker {
     var onUpdate: ((FinderWindowTrackerUpdate) -> Void)?
     var shouldRemainVisible: (() -> Bool)?
@@ -22,6 +93,8 @@ final class FinderWindowTracker {
     private let automationService: FinderAutomationServing
     private var timer: Timer?
     private var lastSnapshot: FinderWindowSnapshot?
+    private var stateRefreshCache = FinderStateRefreshCache()
+    private var pollReentrancyGate = FinderPollReentrancyGate()
     private var isUsingActiveInterval = false
     private var currentInterval: TimeInterval?
     private var motionTrackingDeadline: Date?
@@ -61,11 +134,33 @@ final class FinderWindowTracker {
     }
 
     func refreshNow() {
-        poll()
+        performPoll(forceFinderStateRefresh: true)
     }
 
     @objc
     private func poll() {
+        performPoll(forceFinderStateRefresh: false)
+    }
+
+    private func refreshFrameNow() {
+        performPoll(forceFinderStateRefresh: false)
+    }
+
+    private func performPoll(forceFinderStateRefresh: Bool) {
+        var forceRefresh = forceFinderStateRefresh
+
+        while pollReentrancyGate.begin(forceRefresh: forceRefresh) {
+            performSinglePoll(forceFinderStateRefresh: forceRefresh)
+            let pendingPoll = pollReentrancyGate.finish()
+            guard pendingPoll.shouldPoll else {
+                return
+            }
+
+            forceRefresh = pendingPoll.forceRefresh
+        }
+    }
+
+    private func performSinglePoll(forceFinderStateRefresh: Bool) {
         let finderIsFrontmost = isFinderFrontmost()
         if finderIsFrontmost {
             syncAccessibilityObservation()
@@ -93,7 +188,7 @@ final class FinderWindowTracker {
 
         logFinderWindowDiagnostics(reason: "poll")
 
-        guard let snapshot = captureSnapshot() else {
+        guard let snapshot = captureSnapshot(forceFinderStateRefresh: forceFinderStateRefresh) else {
             if shouldRemainVisible?() == true {
                 missingSnapshotGraceUntil = nil
                 return
@@ -117,7 +212,7 @@ final class FinderWindowTracker {
         if snapshot != lastSnapshot {
             if let lastSnapshot, snapshot.frame != lastSnapshot.frame {
                 motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
-                if shouldHideForMotionChange(), beginMotionHiding(with: snapshot) {
+                if shouldHideForPolledMotionChange(), beginMotionHiding(with: snapshot) {
                     self.lastSnapshot = snapshot
                     updateTimerIfNeeded(finderIsFrontmost: finderIsFrontmost)
                     return
@@ -217,7 +312,7 @@ final class FinderWindowTracker {
         onUpdate?(.temporarilyHiddenForMotion)
     }
 
-    private func captureSnapshot() -> FinderWindowSnapshot? {
+    private func captureSnapshot(forceFinderStateRefresh: Bool) -> FinderWindowSnapshot? {
         lastCaptureWasKnownChildWindow = false
         guard let finderPID = NSRunningApplication
             .runningApplications(withBundleIdentifier: "com.apple.finder")
@@ -230,7 +325,19 @@ final class FinderWindowTracker {
             return nil
         }
 
-        if let state = automationService.currentState() {
+        let now = Date()
+        if stateRefreshCache.shouldRefresh(
+            now: now,
+            minimumInterval: config.activePollInterval,
+            forceRefresh: forceFinderStateRefresh
+        ) {
+            let refreshedState = automationService.currentState()
+            stateRefreshCache.store(refreshedState, refreshedAt: now)
+        }
+
+        let state = stateRefreshCache.state
+
+        if let state {
             guard windowInfo.number == nil || windowInfo.number == state.windowID else {
                 lastCaptureWasKnownChildWindow = true
                 return nil
@@ -407,28 +514,32 @@ final class FinderWindowTracker {
             attachToFocusedWindow()
             logFinderWindowDiagnostics(reason: notification)
             refreshNow()
-            scheduleBurstRefreshes()
+            scheduleFrameBurstRefreshes()
         case kAXMovedNotification,
              kAXResizedNotification:
             motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
-            if isTemporarilyHiddenForMotion || shouldHideForMotionChange() {
+            if FinderMotionHidingPolicy.shouldHide(
+                source: .accessibilityNotification,
+                suppressionDeadline: suppressMotionHidingUntil,
+                now: Date()
+            ) {
                 _ = beginMotionHiding()
             }
             logFinderWindowDiagnostics(reason: notification)
-            refreshNow()
-            scheduleBurstRefreshes()
+            refreshFrameNow()
+            scheduleFrameBurstRefreshes()
         default:
             break
         }
     }
 
-    private func scheduleBurstRefreshes() {
+    private func scheduleFrameBurstRefreshes() {
         cancelBurstRefreshes()
 
         let delays: [TimeInterval] = [0.016, 0.032, 0.05, 0.075]
         pendingBurstRefreshes = delays.map { delay in
             let workItem = DispatchWorkItem { [weak self] in
-                self?.refreshNow()
+                self?.refreshFrameNow()
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
             return workItem
@@ -484,7 +595,7 @@ final class FinderWindowTracker {
             self.pendingMotionSnapshot = nil
             emitSnapshot(pendingMotionSnapshot)
         } else {
-            refreshNow()
+            refreshFrameNow()
         }
 
         updateTimerIfNeeded(finderIsFrontmost: isFinderFrontmost())
@@ -498,17 +609,17 @@ final class FinderWindowTracker {
         suppressMotionHidingUntil = nil
     }
 
-    private func shouldHideForMotionChange() -> Bool {
-        guard let suppressMotionHidingUntil else {
-            return true
+    private func shouldHideForPolledMotionChange() -> Bool {
+        let now = Date()
+        let shouldHide = FinderMotionHidingPolicy.shouldHide(
+            source: .polledFrame,
+            suppressionDeadline: suppressMotionHidingUntil,
+            now: now
+        )
+        if shouldHide {
+            suppressMotionHidingUntil = nil
         }
-
-        if suppressMotionHidingUntil > Date() {
-            return false
-        }
-
-        self.suppressMotionHidingUntil = nil
-        return true
+        return shouldHide
     }
 
     private func logFinderWindowDiagnostics(reason: String) {

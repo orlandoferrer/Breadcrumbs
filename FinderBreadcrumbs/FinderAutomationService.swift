@@ -12,15 +12,33 @@ protocol FinderAutomationServing {
     func navigate(to path: String, windowID: Int?) -> Bool
 }
 
+protocol AppleScriptExecuting {
+    func execute(_ script: NSAppleScript, errorInfo: inout NSDictionary?) -> NSAppleEventDescriptor
+}
+
+struct SystemAppleScriptExecutor: AppleScriptExecuting {
+    func execute(_ script: NSAppleScript, errorInfo: inout NSDictionary?) -> NSAppleEventDescriptor {
+        script.executeAndReturnError(&errorInfo)
+    }
+}
+
 final class FinderAutomationService: FinderAutomationServing {
+    private let scriptExecutor: AppleScriptExecuting
+
     private lazy var currentStateScript: NSAppleScript? = {
         let script = NSAppleScript(source: Self.currentStateScriptSource)
         script?.compileAndReturnError(nil)
         return script
     }()
 
+    init(scriptExecutor: AppleScriptExecuting = SystemAppleScriptExecutor()) {
+        self.scriptExecutor = scriptExecutor
+    }
+
     func currentState() -> FinderState? {
-        guard let response = run(currentStateScript, logErrors: false)?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let response = run(currentStateScript, logErrors: false)?
+            .stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
               !response.isEmpty else {
             return nil
         }
@@ -117,9 +135,11 @@ final class FinderAutomationService: FinderAutomationServing {
 
     private var lastQuietErrorNumber: Int?
 
-    private func run(_ appleScript: NSAppleScript?, logErrors: Bool) -> String? {
+    private func run(_ appleScript: NSAppleScript?, logErrors: Bool) -> NSAppleEventDescriptor? {
+        guard let appleScript else { return nil }
+
         var errorInfo: NSDictionary?
-        let result = appleScript?.executeAndReturnError(&errorInfo)
+        let result = scriptExecutor.execute(appleScript, errorInfo: &errorInfo)
         if let errorInfo {
             let errorNumber = errorInfo[NSAppleScript.errorNumber] as? Int
             if logErrors {
@@ -133,7 +153,7 @@ final class FinderAutomationService: FinderAutomationServing {
             return nil
         }
         lastQuietErrorNumber = nil
-        return result?.stringValue
+        return result
     }
 
     private func parseFinderObjectPath(from description: String) -> String? {

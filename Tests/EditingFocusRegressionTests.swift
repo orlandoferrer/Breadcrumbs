@@ -20,6 +20,10 @@ struct EditingFocusRegressionTests {
         testReadableShortcutEncoding()
         testConfigMissingDiagnosticsFlagUsesDefault()
         testConfigIgnoresRemovedTrackingFlag()
+        testNavigationAcceptsNonTextAppleScriptResult()
+        testFinderStateRefreshCacheThrottlesMotionPolling()
+        testFinderPollReentrancyIsCoalesced()
+        testAccessibilityResizeBypassesPollSuppression()
         testHotKeyRegistrationReturnsRegisterFailure()
         testHotKeyRegistrationReturnsHandlerFailureAndCleansUp()
         testHotKeyRegistrationSuccessInstallsHandler()
@@ -270,6 +274,93 @@ struct EditingFocusRegressionTests {
         expect(config.shortcut == .default, "Legacy configs with removed keys should still decode normally.")
     }
 
+    private static func testNavigationAcceptsNonTextAppleScriptResult() {
+        let descriptor = NSAppleEventDescriptor.null()
+        let executor = MockAppleScriptExecutor(result: descriptor)
+        let service = FinderAutomationService(scriptExecutor: executor)
+
+        expect(descriptor.stringValue == nil, "The regression fixture must use a non-text AppleScript result.")
+        expect(
+            service.navigate(to: NSTemporaryDirectory(), windowID: 1),
+            "An error-free non-text AppleScript result should count as successful navigation."
+        )
+        expect(executor.executeCalls == 1, "Navigation should execute exactly one AppleScript.")
+    }
+
+    private static func testFinderStateRefreshCacheThrottlesMotionPolling() {
+        var cache = FinderStateRefreshCache()
+        var loadCount = 0
+        let initialDate = Date(timeIntervalSinceReferenceDate: 1_000)
+        let expectedState = FinderState(
+            displayedPath: "/tmp",
+            resolvedPath: "/private/tmp",
+            windowID: 1
+        )
+
+        func refreshState(at date: Date, forceRefresh: Bool = false) -> FinderState? {
+            guard cache.shouldRefresh(
+                now: date,
+                minimumInterval: 0.12,
+                forceRefresh: forceRefresh
+            ) else {
+                return cache.state
+            }
+            loadCount += 1
+            cache.store(expectedState, refreshedAt: date)
+            return cache.state
+        }
+
+        _ = refreshState(at: initialDate)
+        _ = refreshState(at: initialDate.addingTimeInterval(0.016))
+
+        expect(loadCount == 1, "A 16 ms frame poll should reuse the cached Finder path state.")
+
+        let refreshedState = refreshState(at: initialDate.addingTimeInterval(0.121))
+        expect(loadCount == 2, "Finder path state should refresh after the normal active interval.")
+        expect(refreshedState == expectedState, "Refreshing should return the latest Finder state.")
+
+        _ = refreshState(at: initialDate.addingTimeInterval(0.122), forceRefresh: true)
+        expect(loadCount == 3, "Explicit refreshes must bypass the path-state cache.")
+    }
+
+    private static func testAccessibilityResizeBypassesPollSuppression() {
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        let suppressionDeadline = now.addingTimeInterval(0.35)
+
+        expect(
+            !FinderMotionHidingPolicy.shouldHide(
+                source: .polledFrame,
+                suppressionDeadline: suppressionDeadline,
+                now: now
+            ),
+            "Late polled frame changes should remain suppressed while the bar settles."
+        )
+        expect(
+            FinderMotionHidingPolicy.shouldHide(
+                source: .accessibilityNotification,
+                suppressionDeadline: suppressionDeadline,
+                now: now
+            ),
+            "An explicit Accessibility resize must hide the bar even during poll suppression."
+        )
+    }
+
+    private static func testFinderPollReentrancyIsCoalesced() {
+        var gate = FinderPollReentrancyGate()
+
+        expect(gate.begin(forceRefresh: false), "The first Finder poll should begin immediately.")
+        expect(
+            !gate.begin(forceRefresh: true),
+            "A Finder notification received during AppleScript execution must not re-enter polling."
+        )
+
+        let pendingPoll = gate.finish()
+        expect(pendingPoll.shouldPoll, "A nested Finder notification should schedule one follow-up poll.")
+        expect(pendingPoll.forceRefresh, "A nested forced refresh must be preserved for the follow-up poll.")
+        expect(gate.begin(forceRefresh: false), "The gate should reopen after the active poll finishes.")
+        _ = gate.finish()
+    }
+
     private static func testHotKeyRegistrationReturnsRegisterFailure() {
         let registrar = MockHotKeyRegistrar(registerStatus: OSStatus(eventHotKeyExistsErr))
         let manager = HotKeyManager(registrar: registrar)
@@ -381,6 +472,21 @@ private final class RecordingFinderAutomationService: FinderAutomationServing {
     func navigate(to path: String, windowID: Int?) -> Bool {
         navigateRequests.append((path, windowID))
         return true
+    }
+}
+
+private final class MockAppleScriptExecutor: AppleScriptExecuting {
+    let result: NSAppleEventDescriptor
+    var executeCalls = 0
+
+    init(result: NSAppleEventDescriptor) {
+        self.result = result
+    }
+
+    func execute(_ script: NSAppleScript, errorInfo: inout NSDictionary?) -> NSAppleEventDescriptor {
+        executeCalls += 1
+        errorInfo = nil
+        return result
     }
 }
 
