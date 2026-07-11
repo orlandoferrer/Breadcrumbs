@@ -11,6 +11,7 @@ struct FinderWindowSnapshot: Equatable {
 enum FinderWindowTrackerUpdate: Equatable {
     case snapshot(FinderWindowSnapshot)
     case hidden
+    case hiddenForQuickLook
     case temporarilyHiddenForMotion
 }
 
@@ -66,6 +67,14 @@ enum FinderResizeHitTester {
         return isRoundedCornerHit
             || distanceToHorizontalEdge <= edgeTolerance
             || distanceToVerticalEdge <= edgeTolerance
+    }
+}
+
+enum QuickLookAXWindowDetector {
+    static func isPreviewWindow(role: String?, subrole: String?, title: String?) -> Bool {
+        role == kAXWindowRole as String
+            && subrole == "Quick Look"
+            && title == "Quick Look"
     }
 }
 
@@ -230,6 +239,12 @@ final class FinderWindowTracker: @unchecked Sendable {
             return
         }
 
+        guard !isQuickLookPreviewVisible() else {
+            cancelMotionHiding()
+            emitQuickLookHidden()
+            return
+        }
+
         logFinderWindowDiagnostics(reason: "poll")
 
         guard let snapshot = captureSnapshot(forceFinderStateRefresh: forceFinderStateRefresh) else {
@@ -359,6 +374,11 @@ final class FinderWindowTracker: @unchecked Sendable {
         onUpdate?(.temporarilyHiddenForMotion)
     }
 
+    private func emitQuickLookHidden() {
+        isOverlayHidden = true
+        onUpdate?(.hiddenForQuickLook)
+    }
+
     private func captureSnapshot(forceFinderStateRefresh: Bool) -> FinderWindowSnapshot? {
         lastCaptureWasKnownChildWindow = false
         guard let finderPID = NSRunningApplication
@@ -470,7 +490,7 @@ final class FinderWindowTracker: @unchecked Sendable {
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp]
         ) { [weak self] event in
-            self?.handleGlobalMouseEvent(event)
+            self?.handleGlobalInputEvent(event)
         }
     }
 
@@ -482,7 +502,7 @@ final class FinderWindowTracker: @unchecked Sendable {
         isResizeDragInProgress = false
     }
 
-    private func handleGlobalMouseEvent(_ event: NSEvent) {
+    private func handleGlobalInputEvent(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
             guard isFinderFrontmost(), let lastSnapshot else { return }
@@ -738,6 +758,26 @@ final class FinderWindowTracker: @unchecked Sendable {
             suppressMotionHidingUntil = nil
         }
         return shouldHide
+    }
+
+    private func isQuickLookPreviewVisible() -> Bool {
+        guard AccessibilityPermissionManager.isTrusted, let observedAppElement else { return false }
+
+        var windowsValue: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            observedAppElement,
+            kAXWindowsAttribute as CFString,
+            &windowsValue
+        )
+        guard result == .success else { return false }
+        let windows = windowsValue as? [AXUIElement] ?? []
+        return windows.contains { window in
+            QuickLookAXWindowDetector.isPreviewWindow(
+                role: stringAttribute(kAXRoleAttribute, from: window),
+                subrole: stringAttribute(kAXSubroleAttribute, from: window),
+                title: stringAttribute(kAXTitleAttribute, from: window)
+            )
+        }
     }
 
     private func logFinderWindowDiagnostics(reason: String) {

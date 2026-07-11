@@ -26,6 +26,7 @@ struct EditingFocusRegressionTests {
         testLiveResizeBypassesPollSuppression()
         testMotionHidingWaitsForMouseRelease()
         testFinderResizeBorderHitTesting()
+        testQuickLookAXWindowDetection()
         testHotKeyRegistrationReturnsRegisterFailure()
         testHotKeyRegistrationReturnsHandlerFailureAndCleansUp()
         testHotKeyRegistrationSuccessInstallsHandler()
@@ -388,6 +389,33 @@ struct EditingFocusRegressionTests {
         expect(
             !FinderResizeHitTester.isResizeBorderHit(point: CGPoint(x: 500, y: 400), frame: frame),
             "A click inside Finder content must not be mistaken for a resize drag."
+        )
+    }
+
+    private static func testQuickLookAXWindowDetection() {
+        expect(
+            QuickLookAXWindowDetector.isPreviewWindow(
+                role: "AXWindow",
+                subrole: "Quick Look",
+                title: "Quick Look"
+            ),
+            "Finder's Quick Look AX window should suppress the bar."
+        )
+        expect(
+            !QuickLookAXWindowDetector.isPreviewWindow(
+                role: "AXWindow",
+                subrole: "AXStandardWindow",
+                title: "Documents"
+            ),
+            "A normal Finder window must not be classified as Quick Look."
+        )
+        expect(
+            !QuickLookAXWindowDetector.isPreviewWindow(
+                role: "AXWindow",
+                subrole: "AXUnknown",
+                title: nil
+            ),
+            "Finder's transient unknown AX window must not be classified as Quick Look."
         )
     }
 

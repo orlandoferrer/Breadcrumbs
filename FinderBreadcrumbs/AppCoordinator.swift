@@ -62,6 +62,8 @@ final class AppCoordinator {
                 self.overlayController.update(with: snapshot, config: self.config)
             case .temporarilyHiddenForMotion:
                 self.overlayController.hide()
+            case .hiddenForQuickLook:
+                self.overlayController.hide()
             case .hidden:
                 guard !self.shouldKeepOverlayVisible else { return }
                 self.overlayController.hide()
