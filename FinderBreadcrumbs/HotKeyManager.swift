@@ -1,6 +1,8 @@
 import Carbon
 import Foundation
 
+/// Thin protocol over Carbon C functions, allowing registration behavior to be
+/// tested without reserving a real system-wide shortcut.
 protocol HotKeyRegistering {
     func register(
         keyCode: UInt32,
@@ -50,6 +52,10 @@ struct CarbonHotKeyRegistrar: HotKeyRegistering {
     }
 }
 
+/// Registers the configured system-wide shortcut only while Finder is active.
+///
+/// Carbon remains useful here because `RegisterEventHotKey` can reserve a key
+/// without requiring Input Monitoring permission.
 final class HotKeyManager {
     var onActivate: (() -> Void)?
 
@@ -163,6 +169,8 @@ private func hotKeyEventHandler(
     _ event: EventRef?,
     _ userData: UnsafeMutableRawPointer?
 ) -> OSStatus {
+    // C callbacks cannot capture Swift objects. Carbon returns the opaque pointer
+    // supplied during registration, which is converted back without taking ownership.
     guard let userData else { return noErr }
     let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
     return manager.handleHotKeyEvent(event)

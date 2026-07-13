@@ -2,6 +2,11 @@ import AppKit
 import Carbon
 import Foundation
 
+/// All user-configurable behavior loaded from `config.json`.
+///
+/// `Codable` lets `JSONDecoder` and `JSONEncoder` translate this Swift value to
+/// and from JSON. Defaults are applied per property so older config files keep
+/// working when a new setting is introduced.
 struct AppConfig: Codable {
     enum DisplayMode: String, Codable {
         case text
@@ -292,8 +297,25 @@ struct AppConfig: Codable {
         shortcut: .default,
         debugLogFinderWindowDiagnostics: false
     )
+
+    /// Replaces timer intervals that would cause an invalid or continuously
+    /// firing `Timer`. Other numeric settings intentionally remain flexible so
+    /// advanced users can experiment with layout and motion behavior.
+    func sanitized() -> AppConfig {
+        var result = self
+        let defaults = AppConfig.default
+        result.activePollInterval = Self.validInterval(activePollInterval, fallback: defaults.activePollInterval)
+        result.motionPollInterval = Self.validInterval(motionPollInterval, fallback: defaults.motionPollInterval)
+        result.inactivePollInterval = Self.validInterval(inactivePollInterval, fallback: defaults.inactivePollInterval)
+        return result
+    }
+
+    private static func validInterval(_ value: TimeInterval, fallback: TimeInterval) -> TimeInterval {
+        value.isFinite && value > 0 ? value : fallback
+    }
 }
 
+/// Owns the on-disk location and JSON serialization of `AppConfig`.
 enum AppConfigLoader {
     static let appSupportDirectoryName = "FinderBreadcrumbs"
     static let configFileName = "config.json"
@@ -308,7 +330,7 @@ enum AppConfigLoader {
         }
 
         do {
-            return try JSONDecoder().decode(AppConfig.self, from: data)
+            return try JSONDecoder().decode(AppConfig.self, from: data).sanitized()
         } catch {
             NSLog(
                 "FinderBreadcrumbs could not decode config at %@, using defaults: %@",

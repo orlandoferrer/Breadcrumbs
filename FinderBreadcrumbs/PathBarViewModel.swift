@@ -2,6 +2,10 @@ import AppKit
 import Foundation
 
 @MainActor
+/// Presentation and editing state shared by the SwiftUI path bar.
+///
+/// The view model contains no window-positioning logic. It translates Finder
+/// state into display text and turns editing actions into navigation requests.
 final class PathBarViewModel: ObservableObject {
     enum Status {
         case ready
@@ -41,6 +45,8 @@ final class PathBarViewModel: ObservableObject {
         currentState = state
         status = .ready
 
+        // A tab/window change invalidates the edit session. Continuing would risk
+        // navigating a Finder window other than the one the user now sees.
         if isEditing, let previousState, previousState != state {
             endEditingSession(returnFocusToFinder: false, resetEditingTextFromCurrentState: false)
         }
@@ -74,6 +80,8 @@ final class PathBarViewModel: ObservableObject {
             return
         }
 
+        // Return performs the same conservative completion as Tab, then resolves
+        // `~`, `.`/`..`, and symbolic links before Finder sees the path.
         let autocompleted = completePathIfUnambiguous(candidate) ?? candidate
         let normalized = URL(fileURLWithPath: NSString(string: autocompleted).expandingTildeInPath)
             .standardizedFileURL
@@ -108,6 +116,8 @@ final class PathBarViewModel: ObservableObject {
     }
 
     private func completePathIfUnambiguous(_ rawInput: String) -> String? {
+        // Completion is directory-only and succeeds only for exactly one match;
+        // this deliberately avoids a suggestion menu and ambiguity state.
         let input = NSString(string: rawInput).expandingTildeInPath
         let hasTrailingSlash = input.hasSuffix("/")
         let nsInput = input as NSString

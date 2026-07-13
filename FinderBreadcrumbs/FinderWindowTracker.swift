@@ -3,11 +3,14 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
+/// The two pieces of data needed to render the bar: Finder's screen rectangle
+/// and the directory represented by that Finder window.
 struct FinderWindowSnapshot: Equatable {
     var frame: CGRect
     var state: FinderState?
 }
 
+/// Events emitted by `FinderWindowTracker` to `AppCoordinator`.
 enum FinderWindowTrackerUpdate: Equatable {
     case snapshot(FinderWindowSnapshot)
     case hidden
@@ -15,12 +18,16 @@ enum FinderWindowTrackerUpdate: Equatable {
     case temporarilyHiddenForMotion
 }
 
+/// Describes how the tracker learned that Finder's frame changed. Polled moves
+/// may be stale after settling, while resize and AX events are authoritative.
 enum FinderMotionChangeSource {
     case accessibilityNotification
     case polledMove
     case polledResize
 }
 
+/// Pure decision logic for whether a frame change should hide the overlay.
+/// Keeping it free of AppKit state makes the edge cases easy to test.
 enum FinderMotionHidingPolicy {
     static func shouldHide(
         source: FinderMotionChangeSource,
@@ -43,6 +50,8 @@ enum FinderMotionCompletionPolicy {
     }
 }
 
+/// Approximates Finder's draggable resize border, including larger hit regions
+/// around rounded corners where the visible edge is not rectangular.
 enum FinderResizeHitTester {
     static func isResizeBorderHit(
         point: CGPoint,
@@ -70,14 +79,18 @@ enum FinderResizeHitTester {
     }
 }
 
+/// Classifies Finder's Accessibility windows without depending on their title.
 enum QuickLookAXWindowDetector {
     static func isPreviewWindow(role: String?, subrole: String?, title: String?) -> Bool {
+        // "Quick Look" is Finder's dedicated AX subrole. The visible title is
+        // deliberately ignored because it can be localized or changed by macOS.
         role == kAXWindowRole as String
             && subrole == "Quick Look"
-            && title == "Quick Look"
     }
 }
 
+/// Throttles expensive Apple Event reads while allowing window frames to be
+/// sampled at the faster motion interval.
 struct FinderStateRefreshCache {
     private var cachedState: FinderState?
     private var lastRefreshDate: Date?
@@ -103,6 +116,11 @@ struct FinderStateRefreshCache {
     }
 }
 
+/// Converts nested poll requests into at most one follow-up poll.
+///
+/// Polling can synchronously trigger callbacks through macOS frameworks. Running
+/// a second poll while the first mutates state previously caused Swift exclusive
+/// access failures, so requests are coalesced instead.
 struct FinderPollReentrancyGate {
     private var isActive = false
     private var hasPendingPoll = false
@@ -128,6 +146,17 @@ struct FinderPollReentrancyGate {
     }
 }
 
+/// Discovers the frontmost Finder window and emits snapshots for the overlay.
+///
+/// Finder does not expose one API containing both window geometry and folder
+/// state, so this class combines three mechanisms:
+/// - Core Graphics finds the frontmost Finder window and its frame.
+/// - Apple Events load the active tab's directory and Finder window ID.
+/// - Accessibility notifications improve move/resize tracking and detect Quick Look.
+///
+/// Mutable tracker state is confined to the main thread. The class is marked
+/// `@unchecked Sendable` only because the AppleScript request captures a weak
+/// reference before dispatching its result back to the main queue.
 final class FinderWindowTracker: @unchecked Sendable {
     var onUpdate: ((FinderWindowTrackerUpdate) -> Void)?
     var shouldRemainVisible: (() -> Bool)?
@@ -139,6 +168,7 @@ final class FinderWindowTracker: @unchecked Sendable {
         qos: .utility
     )
     private var timer: Timer?
+    private var isRunning = false
     private var lastSnapshot: FinderWindowSnapshot?
     private var stateRefreshCache = FinderStateRefreshCache()
     private var isStateRefreshInFlight = false
@@ -173,11 +203,15 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     func start() {
+        guard !isRunning else { return }
+        isRunning = true
         installGlobalMouseMonitor()
         rescheduleTimer(finderIsFrontmost: isFinderFrontmost())
     }
 
     func stop() {
+        guard isRunning else { return }
+        isRunning = false
         timer?.invalidate()
         timer = nil
         cancelBurstRefreshes()
@@ -187,6 +221,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     func refreshNow() {
+        guard isRunning else { return }
         performPoll(forceFinderStateRefresh: true)
     }
 
@@ -200,6 +235,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func performPoll(forceFinderStateRefresh: Bool) {
+        guard isRunning else { return }
         var forceRefresh = forceFinderStateRefresh
 
         while pollReentrancyGate.begin(forceRefresh: forceRefresh) {
@@ -404,6 +440,9 @@ final class FinderWindowTracker: @unchecked Sendable {
         let state = stateRefreshCache.state
 
         if let state {
+            // Never pair a path from one Finder window with another window's
+            // frame. Temporary child windows can appear ahead of the browser
+            // window in the Core Graphics list.
             guard windowInfo.number == nil || windowInfo.number == state.windowID else {
                 lastCaptureWasKnownChildWindow = true
                 return nil
@@ -425,6 +464,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func requestStateRefresh(forceRefresh: Bool) {
+        guard isRunning else { return }
         guard !isStateRefreshInFlight else {
             hasPendingForcedStateRefresh = hasPendingForcedStateRefresh || forceRefresh
             return
@@ -432,6 +472,8 @@ final class FinderWindowTracker: @unchecked Sendable {
 
         isStateRefreshInFlight = true
         let automationService = automationService
+        // Only AppleScript execution happens off-main. All cache and lifecycle
+        // state returns to the main queue before mutation.
         stateRefreshQueue.async { [weak self] in
             let state = automationService.currentState()
             DispatchQueue.main.async { [weak self] in
@@ -441,8 +483,12 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func completeStateRefresh(_ state: FinderState?) {
-        stateRefreshCache.store(state, refreshedAt: Date())
         isStateRefreshInFlight = false
+        guard isRunning else {
+            hasPendingForcedStateRefresh = false
+            return
+        }
+        stateRefreshCache.store(state, refreshedAt: Date())
 
         if hasPendingForcedStateRefresh {
             hasPendingForcedStateRefresh = false
@@ -562,6 +608,8 @@ final class FinderWindowTracker: @unchecked Sendable {
         finderObservedPID = finderPID
         observedAppElement = AXUIElementCreateApplication(finderPID)
 
+        // AXObserver callbacks are delivered through a CFRunLoop source. Adding
+        // it to the main run loop keeps tracker mutations serialized with Timer.
         let source = AXObserverGetRunLoopSource(observerRef)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
 
@@ -699,6 +747,8 @@ final class FinderWindowTracker: @unchecked Sendable {
             emitTemporarilyHiddenForMotion()
         }
 
+        // Every new motion signal pushes the settle deadline out. Resize drags
+        // additionally remain hidden until the global mouse-up event arrives.
         scheduleMotionSettleRefresh()
     }
 

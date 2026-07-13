@@ -1,6 +1,7 @@
 import ApplicationServices
 import Foundation
 
+/// A shared UI representation for macOS privacy permission results.
 enum PermissionState {
     case granted
     case denied
@@ -8,6 +9,10 @@ enum PermissionState {
     case unknown
 }
 
+/// Wraps the process-wide Accessibility trust check.
+///
+/// Accessibility is optional for basic operation but enables better motion
+/// tracking and Finder Quick Look detection.
 enum AccessibilityPermissionManager {
     static func ensurePrompted() {
         guard !isTrusted else { return }
@@ -30,6 +35,8 @@ enum AccessibilityPermissionManager {
     }
 }
 
+/// Queries macOS's Transparency, Consent, and Control (TCC) state for Apple
+/// Events sent from this app to Finder.
 enum AutomationPermissionManager {
     /// Checks whether macOS allows this app to send Apple Events to Finder.
     /// With `promptIfNeeded` the call blocks until the user answers the

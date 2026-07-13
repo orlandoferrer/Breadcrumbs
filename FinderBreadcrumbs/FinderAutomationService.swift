@@ -1,12 +1,16 @@
 import CoreServices
 import Foundation
 
+/// The active Finder tab's path plus the ID of its containing Finder window.
+/// The window ID prevents a path from being applied to the wrong window during
+/// rapid focus or tab changes.
 struct FinderState: Equatable {
     var displayedPath: String
     var resolvedPath: String
     var windowID: Int
 }
 
+/// A testable boundary around all commands sent to Finder via Apple Events.
 protocol FinderAutomationServing: AnyObject, Sendable {
     func currentState() -> FinderState?
     func navigate(to path: String, windowID: Int?) -> Bool
@@ -22,6 +26,11 @@ struct SystemAppleScriptExecutor: AppleScriptExecuting {
     }
 }
 
+/// Reads and changes Finder state using its public AppleScript dictionary.
+///
+/// `NSAppleScript` is synchronous. The tracker calls its dedicated service on a
+/// serial utility queue, while navigation uses a separate service on the main
+/// actor. Do not share one instance across concurrent queues.
 final class FinderAutomationService: FinderAutomationServing, @unchecked Sendable {
     private let scriptExecutor: AppleScriptExecuting
 
@@ -43,6 +52,8 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
             return nil
         }
 
+        // The script returns three newline-delimited fields: window ID, direct
+        // POSIX path, and a Finder object description used as a fallback.
         let lines = response.components(separatedBy: .newlines)
         guard let windowID = Int(lines.first ?? "") else {
             return nil
@@ -90,6 +101,8 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
         """
 
     func navigate(to path: String, windowID: Int?) -> Bool {
+        // Validate before asking Finder so invalid input remains editable and the
+        // caller can present immediate failure feedback.
         let standardized = NSString(string: path).expandingTildeInPath
         let url = URL(fileURLWithPath: standardized).standardizedFileURL.resolvingSymlinksInPath()
 

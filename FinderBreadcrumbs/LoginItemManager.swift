@@ -1,6 +1,7 @@
 import Foundation
 import ServiceManagement
 
+/// Small wrapper around Apple's modern launch-at-login service.
 enum LoginItemManager {
     static var isEnabled: Bool {
         SMAppService.mainApp.status == .enabled

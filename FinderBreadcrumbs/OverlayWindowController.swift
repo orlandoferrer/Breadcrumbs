@@ -2,6 +2,10 @@ import AppKit
 import SwiftUI
 
 @MainActor
+/// Owns, positions, shows, and hides the companion `NSPanel`.
+///
+/// SwiftUI renders the panel contents, but AppKit owns window-level behavior
+/// such as focus, z-order, Spaces, and global click dismissal.
 final class OverlayWindowController {
     private let panel: FocusablePanel
     private let viewModel: PathBarViewModel
@@ -93,6 +97,8 @@ final class OverlayWindowController {
     }
 
     private func installOutsideClickMonitor() {
+        // Global monitors observe clicks delivered to other applications. Clicks
+        // inside this app are handled by `FocusablePanel.resignKey()` instead.
         removeOutsideClickMonitor()
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
@@ -158,6 +164,8 @@ final class OverlayWindowController {
     }
 }
 
+/// A borderless panel that can accept text input without becoming a normal main
+/// application window.
 private final class FocusablePanel: NSPanel {
     var onResignKey: (() -> Void)?
     var onMouseDown: (() -> Void)?

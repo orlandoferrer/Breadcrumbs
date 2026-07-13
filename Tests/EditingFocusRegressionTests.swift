@@ -3,6 +3,10 @@ import Carbon
 import Foundation
 
 @main
+/// Lightweight regression runner used by `check.sh`.
+///
+/// These are intentionally dependency-free executable tests rather than an
+/// XCTest target. A failed expectation prints its reason and exits nonzero.
 struct EditingFocusRegressionTests {
     static func main() async {
         await MainActor.run {
@@ -20,6 +24,7 @@ struct EditingFocusRegressionTests {
         testReadableShortcutEncoding()
         testConfigMissingDiagnosticsFlagUsesDefault()
         testConfigIgnoresRemovedTrackingFlag()
+        testConfigSanitizesInvalidPollingIntervals()
         testNavigationAcceptsNonTextAppleScriptResult()
         testFinderStateRefreshCacheThrottlesMotionPolling()
         testFinderPollReentrancyIsCoalesced()
@@ -277,6 +282,28 @@ struct EditingFocusRegressionTests {
         expect(config.shortcut == .default, "Legacy configs with removed keys should still decode normally.")
     }
 
+    private static func testConfigSanitizesInvalidPollingIntervals() {
+        var config = AppConfig.default
+        config.activePollInterval = 0
+        config.motionPollInterval = -1
+        config.inactivePollInterval = -.infinity
+
+        let sanitized = config.sanitized()
+
+        expect(
+            sanitized.activePollInterval == AppConfig.default.activePollInterval,
+            "A zero active interval must not create a continuously firing timer."
+        )
+        expect(
+            sanitized.motionPollInterval == AppConfig.default.motionPollInterval,
+            "A negative motion interval must fall back to the safe default."
+        )
+        expect(
+            sanitized.inactivePollInterval == AppConfig.default.inactivePollInterval,
+            "A non-finite inactive interval must fall back to the safe default."
+        )
+    }
+
     private static func testNavigationAcceptsNonTextAppleScriptResult() {
         let descriptor = NSAppleEventDescriptor.null()
         let executor = MockAppleScriptExecutor(result: descriptor)
@@ -397,9 +424,9 @@ struct EditingFocusRegressionTests {
             QuickLookAXWindowDetector.isPreviewWindow(
                 role: "AXWindow",
                 subrole: "Quick Look",
-                title: "Quick Look"
+                title: "Vista rapida"
             ),
-            "Finder's Quick Look AX window should suppress the bar."
+            "Finder's Quick Look AX subrole should suppress the bar regardless of its localized title."
         )
         expect(
             !QuickLookAXWindowDetector.isPreviewWindow(

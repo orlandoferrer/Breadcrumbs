@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
+/// Owns the reusable permissions window and reports dismissal exactly once.
 final class WelcomeWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var onDismiss: (() -> Void)?
@@ -67,6 +68,8 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+/// Polls permission state while visible because users grant Accessibility in a
+/// separate System Settings process.
 private struct WelcomeView: View {
     let onDismiss: () -> Void
 

@@ -1,6 +1,8 @@
 import AppKit
 
 @MainActor
+/// Owns the `NSStatusItem`; retaining this controller keeps the menu-bar icon
+/// alive for the lifetime of the process.
 final class StatusMenuController: NSObject {
     private let statusItem: NSStatusItem
     private let onOpenSettings: () -> Void

@@ -3,6 +3,10 @@ import Carbon
 import Foundation
 
 @MainActor
+/// The composition root: creates subsystems and defines how they communicate.
+///
+/// Keeping this wiring in one object lets the tracker, view model, and window
+/// controller stay focused on their own responsibilities.
 final class AppCoordinator {
     private var config: AppConfig
     private let automationService: FinderAutomationServing
@@ -54,6 +58,8 @@ final class AppCoordinator {
             return self.isHotKeyEditingAttemptInProgress || isActivelyEditingHere || self.overlayController.shouldHoldVisibility
         }
 
+        // Tracker updates describe intent; the coordinator decides how UI state
+        // and window visibility should change in response.
         tracker.onUpdate = { [weak self] update in
             guard let self else { return }
             switch update {
@@ -151,6 +157,9 @@ final class AppCoordinator {
     }
 
     private func beginEditingFromHotKey() {
+        // A Finder activation notification and a CGWindow poll can arrive in
+        // either order. Try synchronously, then retry once on the next main-loop
+        // turn after asking the tracker for fresh state.
         isHotKeyEditingAttemptInProgress = true
         tracker.refreshNow()
         if overlayController.beginEditing() {

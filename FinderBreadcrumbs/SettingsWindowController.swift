@@ -2,6 +2,7 @@ import AppKit
 import Carbon
 import SwiftUI
 
+/// Editable settings are copied into a draft so Cancel can discard changes.
 struct AppSettingsDraft {
     var launchAtLogin: Bool
     var shortcut: AppConfig.Shortcut
@@ -9,6 +10,7 @@ struct AppSettingsDraft {
 }
 
 @MainActor
+/// Owns the reusable AppKit window that hosts the SwiftUI settings form.
 final class SettingsWindowController {
     private var window: NSWindow?
 
@@ -120,6 +122,7 @@ private struct SettingsView: View {
     }
 }
 
+/// SwiftUI wrapper around an AppKit view that receives raw key events.
 private struct ShortcutRecorderField: NSViewRepresentable {
     @Binding var shortcut: AppConfig.Shortcut
 
@@ -139,6 +142,8 @@ private struct ShortcutRecorderField: NSViewRepresentable {
     }
 }
 
+/// Captures one key plus any Command, Option, Control, or Shift modifiers and
+/// translates AppKit modifier flags into Carbon's hotkey representation.
 private final class ShortcutRecorderView: NSView {
     var onShortcut: ((AppConfig.Shortcut) -> Void)?
     var shortcutDescription: String = "" {

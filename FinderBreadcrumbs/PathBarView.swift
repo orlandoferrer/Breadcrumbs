@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// SwiftUI content hosted inside the borderless companion panel.
 struct PathBarView: View {
     @ObservedObject var viewModel: PathBarViewModel
 
@@ -128,6 +129,7 @@ private struct ReadOnlyPathContent: View {
     }
 }
 
+/// Pure caret-position logic kept separate so it can be regression tested.
 enum EditingCursorPlacement {
     @MainActor
     static func endInsertionIndex(for field: NSTextField) -> Int {
@@ -135,6 +137,8 @@ enum EditingCursorPlacement {
     }
 }
 
+/// Handles AppKit's shared field editor and places the insertion caret at the
+/// end of the path when a new edit session starts.
 enum PathEditorActivation {
     @MainActor
     @discardableResult
@@ -170,6 +174,8 @@ enum PathEditorActivation {
     }
 }
 
+/// Bridges SwiftUI bindings to `NSTextField`, whose AppKit field-editor behavior
+/// provides more reliable one-click editing than SwiftUI's `TextField` here.
 private struct PathEditorField: NSViewRepresentable {
     @Binding var text: String
     let focusRequestID: Int
@@ -237,6 +243,8 @@ private struct PathEditorField: NSViewRepresentable {
             guard field.lastHandledFocusRequestID != focusRequestID,
                   field.pendingFocusRequestID != focusRequestID else { return }
             field.pendingFocusRequestID = focusRequestID
+            // SwiftUI may call `makeNSView` before the field belongs to a window.
+            // Yielding gives the hosting hierarchy time to attach it.
             Task { @MainActor [weak field] in
                 guard let field else { return }
                 defer {
