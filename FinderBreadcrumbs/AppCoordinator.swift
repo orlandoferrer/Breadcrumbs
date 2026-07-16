@@ -17,7 +17,8 @@ final class AppCoordinator {
     private let settingsWindowController = SettingsWindowController()
     private let welcomeWindowController = WelcomeWindowController()
     private var workspaceObservers: [NSObjectProtocol] = []
-    private var isHotKeyEditingAttemptInProgress = false
+    private var hotKeyEditRequestGate = HotKeyEditRequestGate()
+    private let hotKeyEditRequestTimeout: TimeInterval = 2.0
     private let hasSeenWelcomeKey = "hasSeenWelcome"
     private let finderBundleIdentifier = "com.apple.finder"
 
@@ -55,7 +56,7 @@ final class AppCoordinator {
         tracker.shouldRemainVisible = { [weak self] in
             guard let self else { return false }
             let isActivelyEditingHere = self.viewModel.isEditing && NSApp.isActive
-            return self.isHotKeyEditingAttemptInProgress || isActivelyEditingHere || self.overlayController.shouldHoldVisibility
+            return isActivelyEditingHere || self.overlayController.shouldHoldVisibility
         }
 
         // Tracker updates describe intent; the coordinator decides how UI state
@@ -112,6 +113,7 @@ final class AppCoordinator {
         workspaceObservers.removeAll()
         tracker.stop()
         hotKeyManager.unregister()
+        hotKeyEditRequestGate.cancel()
     }
 
     func showSettings() {
@@ -157,25 +159,44 @@ final class AppCoordinator {
     }
 
     private func beginEditingFromHotKey() {
-        // A Finder activation notification and a CGWindow poll can arrive in
-        // either order. Try synchronously, then retry once on the next main-loop
-        // turn after asking the tracker for fresh state.
-        isHotKeyEditingAttemptInProgress = true
-        tracker.refreshNow()
-        if overlayController.beginEditing() {
-            isHotKeyEditingAttemptInProgress = false
-            return
-        }
-
-        DispatchQueue.main.async { [weak self] in
+        let requestID = hotKeyEditRequestGate.begin()
+        logHotKeyEditing("request \(requestID) started")
+        let timeout = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            defer {
-                self.isHotKeyEditingAttemptInProgress = false
+            self.hotKeyEditRequestGate.cancel(requestID: requestID)
+            self.logHotKeyEditing("request \(requestID) timed out")
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + hotKeyEditRequestTimeout,
+            execute: timeout
+        )
+
+        tracker.requestFreshSnapshot { [weak self] snapshot in
+            timeout.cancel()
+            guard let self else { return }
+            let finderIsFrontmost = self.canBeginEditingFromHotKey
+            let shouldBeginEditing = self.hotKeyEditRequestGate.consume(
+                requestID: requestID,
+                finderIsFrontmost: finderIsFrontmost,
+                hasFreshSnapshot: snapshot != nil
+            )
+            guard shouldBeginEditing, let snapshot else {
+                self.logHotKeyEditing(
+                    "request \(requestID) ignored; frontmost=\(finderIsFrontmost) snapshot=\(snapshot != nil)"
+                )
+                return
             }
-            guard self.canBeginEditingFromHotKey else { return }
-            self.tracker.refreshNow()
+
+            self.logHotKeyEditing("request \(requestID) matched Finder window \(snapshot.state?.windowID ?? -1)")
+            self.viewModel.update(state: snapshot.state, displayMode: self.config.displayMode)
+            self.overlayController.update(with: snapshot, config: self.config)
             _ = self.overlayController.beginEditing()
         }
+    }
+
+    private func logHotKeyEditing(_ message: String) {
+        guard config.debugLogFinderWindowDiagnostics else { return }
+        NSLog("FinderBreadcrumbs hotkey edit: %@", message)
     }
 
     private var canBeginEditingFromHotKey: Bool {
@@ -183,8 +204,7 @@ final class AppCoordinator {
     }
 
     private var shouldKeepOverlayVisible: Bool {
-        isHotKeyEditingAttemptInProgress
-            || (viewModel.isEditing && NSApp.isActive)
+        (viewModel.isEditing && NSApp.isActive)
             || overlayController.shouldHoldVisibility
     }
 
@@ -194,6 +214,10 @@ final class AppCoordinator {
         let isEditingHere = viewModel.isEditing && NSApp.isActive
 
         syncHotKeyRegistration(frontmostBundleIdentifier: frontmostBundleID)
+
+        if !isFinderFrontmost {
+            hotKeyEditRequestGate.cancel()
+        }
 
         if isFinderFrontmost {
             tracker.refreshNow()
@@ -213,6 +237,7 @@ final class AppCoordinator {
 
     private func handleDeactivatedApplicationChange(bundleIdentifier: String?) {
         guard bundleIdentifier == finderBundleIdentifier else { return }
+        hotKeyEditRequestGate.cancel()
         hotKeyManager.deactivate()
     }
 

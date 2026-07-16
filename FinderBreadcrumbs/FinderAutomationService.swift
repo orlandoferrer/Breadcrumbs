@@ -45,15 +45,19 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
     }
 
     func currentState() -> FinderState? {
-        guard let response = run(currentStateScript, logErrors: false)?
-            .stringValue?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !response.isEmpty else {
+        guard let response = run(currentStateScript, logErrors: false)?.stringValue else {
             return nil
         }
 
-        // The script returns three newline-delimited fields: window ID, direct
-        // POSIX path, and a Finder object description used as a fallback.
+        return Self.parseFinderStateResponse(response)
+    }
+
+    static func parseFinderStateResponse(_ response: String) -> FinderState? {
+        let response = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !response.isEmpty else { return nil }
+
+        // The script returns four newline-delimited fields: window ID, direct
+        // POSIX path, Finder object description, and Finder's file URL.
         let lines = response.components(separatedBy: .newlines)
         guard let windowID = Int(lines.first ?? "") else {
             return nil
@@ -61,14 +65,17 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
 
         let directPath = lines.count >= 2 ? lines[1] : ""
         let rawDescription = lines.count >= 3 ? lines[2] : ""
-        let path = !directPath.isEmpty ? directPath : parseFinderObjectPath(from: rawDescription)
+        let rawURL = lines.count >= 4 ? lines[3] : ""
+        let path = !directPath.isEmpty
+            ? directPath
+            : parseFinderFileURL(rawURL) ?? parseFinderObjectPath(from: rawDescription)
         guard let path, !path.isEmpty else { return nil }
 
         let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         return FinderState(displayedPath: path, resolvedPath: resolved, windowID: windowID)
     }
 
-    private static let currentStateScriptSource = """
+    static let currentStateScriptSource = """
         tell application "Finder"
             if not (exists front window) then
                 return ""
@@ -76,7 +83,11 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
             set currentWindow to front window
             set currentTarget to target of currentWindow
             set targetPath to ""
-            set targetDescription to (currentTarget as string)
+            set targetDescription to ""
+            set targetURL to ""
+            try
+                set targetDescription to (currentTarget as string)
+            end try
             try
                 set targetPath to POSIX path of (currentTarget as alias)
             on error
@@ -84,19 +95,16 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
                     set targetPath to POSIX path of (currentTarget as text)
                 on error
                     try
-                    set targetURL to URL of currentTarget
-                    if targetURL starts with "file://" then
-                        set targetPath to POSIX path of targetURL
-                    end if
+                        set targetURL to URL of currentTarget
                     on error
-                        set targetPath to ""
+                        set targetURL to ""
                     end try
                 end try
             end try
             if targetPath is "" then
-                return (id of currentWindow as string) & linefeed & linefeed & targetDescription
+                return (id of currentWindow as string) & linefeed & linefeed & targetDescription & linefeed & targetURL
             end if
-            return (id of currentWindow as string) & linefeed & targetPath & linefeed & targetDescription
+            return (id of currentWindow as string) & linefeed & targetPath & linefeed & targetDescription & linefeed & targetURL
         end tell
         """
 
@@ -169,7 +177,7 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
         return result
     }
 
-    private func parseFinderObjectPath(from description: String) -> String? {
+    private static func parseFinderObjectPath(from description: String) -> String? {
         if description.contains(":"),
            !description.contains(" of "),
            let hfsPathStyle = CFURLPathStyle(rawValue: 1),
@@ -219,5 +227,10 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
         }
 
         return path.path
+    }
+
+    private static func parseFinderFileURL(_ value: String) -> String? {
+        guard let url = URL(string: value), url.isFileURL else { return nil }
+        return url.path
     }
 }

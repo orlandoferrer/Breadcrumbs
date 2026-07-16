@@ -105,10 +105,44 @@ Run the typecheck and lightweight regression suite with:
 ./check.sh
 ```
 
-The suite covers editing focus and window targeting, readable shortcut config,
-hotkey registration lifecycle, Finder polling/reentrancy, resize hiding, config
-sanitization, and Quick Look classification. It uses mocks and does not require
-Finder permissions.
+The suite covers editing focus and window targeting, fresh-snapshot hotkey
+coalescing, readable shortcut config, hotkey registration lifecycle, Finder
+polling/reentrancy, resize hiding, config sanitization, and Quick Look
+classification. It uses mocks and does not require Finder permissions.
+
+## TODO: Potential bugs and unspecified behavior
+
+These items were identified during a code audit. They are candidates for
+reproduction, design decisions, and regression coverage rather than confirmed
+bugs in every macOS configuration.
+
+### Potential bugs
+
+- [x] Prevent the edit hotkey from using stale Finder state immediately after
+  switching windows by waiting for a fresh, window-ID-matched snapshot before
+  entering edit mode.
+- [ ] Move path completion, filesystem validation, symlink resolution, and
+  Finder navigation off the main actor where possible so slow network or
+  external volumes cannot freeze the UI.
+- [ ] Keep the breadcrumb bar within the active screen's visible frame when a
+  Finder window is close to the screen edge or Dock, and avoid making the bar
+  wider than a narrow Finder window.
+- [ ] Distinguish an active resize from late resize notifications so the bar
+  does not begin another hide/show cycle after it has already settled.
+- [ ] Clamp polling intervals to sensible minimum values; currently any finite
+  positive value is accepted, including values small enough to cause excessive
+  CPU use.
+- [ ] Make Settings saves transactional, or roll back Enable at login and hotkey
+  changes when hotkey registration or config persistence fails.
+
+### Behavior to define
+
+- [ ] Decide whether relative paths should resolve from the active Finder folder,
+  the filesystem root, or be rejected as invalid input.
+- [ ] Decide whether manually configured shortcuts must include a modifier, as
+  the Settings UI requires, or whether plain-key global shortcuts are supported.
+- [ ] Confirm whether Quick Look in another Finder window or macOS Space should
+  hide the bar attached to the currently visible Finder window.
 
 ## Next likely steps
 

@@ -52,6 +52,36 @@ struct CarbonHotKeyRegistrar: HotKeyRegistering {
     }
 }
 
+/// Invalidates superseded asynchronous hotkey requests and consumes each valid
+/// request at most once.
+struct HotKeyEditRequestGate {
+    private var generation: UInt = 0
+
+    mutating func begin() -> UInt {
+        generation &+= 1
+        return generation
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+    }
+
+    mutating func cancel(requestID: UInt) {
+        guard requestID == generation else { return }
+        generation &+= 1
+    }
+
+    mutating func consume(
+        requestID: UInt,
+        finderIsFrontmost: Bool,
+        hasFreshSnapshot: Bool
+    ) -> Bool {
+        guard requestID == generation else { return false }
+        generation &+= 1
+        return finderIsFrontmost && hasFreshSnapshot
+    }
+}
+
 /// Registers the configured system-wide shortcut only while Finder is active.
 ///
 /// Carbon remains useful here because `RegisterEventHotKey` can reserve a key

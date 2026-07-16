@@ -146,6 +146,37 @@ struct FinderPollReentrancyGate {
     }
 }
 
+/// Coalesces repeated edit requests onto one Finder state read and permits one
+/// retry when that read belongs to a window that is no longer frontmost.
+struct FinderFreshSnapshotRequestState {
+    private(set) var isActive = false
+    private var canRetry = false
+
+    mutating func begin(isStateRefreshInFlight: Bool) -> Bool {
+        guard !isActive else { return false }
+        isActive = true
+        canRetry = true
+        return !isStateRefreshInFlight
+    }
+
+    mutating func consumeRetryIfAvailable(finderIsFrontmost: Bool) -> Bool {
+        guard isActive, canRetry, finderIsFrontmost else { return false }
+        canRetry = false
+        return true
+    }
+
+    mutating func finish() {
+        isActive = false
+        canRetry = false
+    }
+}
+
+enum FinderWindowPairingPolicy {
+    static func matches(windowNumber: Int?, finderStateWindowID: Int) -> Bool {
+        windowNumber == nil || windowNumber == finderStateWindowID
+    }
+}
+
 /// Discovers the frontmost Finder window and emits snapshots for the overlay.
 ///
 /// Finder does not expose one API containing both window geometry and folder
@@ -173,6 +204,8 @@ final class FinderWindowTracker: @unchecked Sendable {
     private var stateRefreshCache = FinderStateRefreshCache()
     private var isStateRefreshInFlight = false
     private var hasPendingForcedStateRefresh = false
+    private var freshSnapshotCompletion: ((FinderWindowSnapshot?) -> Void)?
+    private var freshSnapshotRequestState = FinderFreshSnapshotRequestState()
     private var pollReentrancyGate = FinderPollReentrancyGate()
     private var isUsingActiveInterval = false
     private var currentInterval: TimeInterval?
@@ -218,11 +251,32 @@ final class FinderWindowTracker: @unchecked Sendable {
         cancelMotionHiding()
         removeGlobalMouseMonitor()
         teardownAccessibilityObservation()
+        completeFreshSnapshotRequest(with: nil)
     }
 
     func refreshNow() {
         guard isRunning else { return }
         performPoll(forceFinderStateRefresh: true)
+    }
+
+    /// Completes only after Finder Automation has returned fresh state and that
+    /// state has been paired with the current frontmost Finder window frame.
+    func requestFreshSnapshot(_ completion: @escaping (FinderWindowSnapshot?) -> Void) {
+        guard isRunning, isFinderFrontmost() else {
+            completion(nil)
+            return
+        }
+
+        let supersededCompletion = freshSnapshotCompletion
+        freshSnapshotCompletion = completion
+        let shouldStartRefresh = freshSnapshotRequestState.begin(
+            isStateRefreshInFlight: isStateRefreshInFlight
+        )
+        supersededCompletion?(nil)
+
+        if shouldStartRefresh {
+            requestStateRefresh(forceRefresh: true)
+        }
     }
 
     @objc
@@ -443,7 +497,10 @@ final class FinderWindowTracker: @unchecked Sendable {
             // Never pair a path from one Finder window with another window's
             // frame. Temporary child windows can appear ahead of the browser
             // window in the Core Graphics list.
-            guard windowInfo.number == nil || windowInfo.number == state.windowID else {
+            guard FinderWindowPairingPolicy.matches(
+                windowNumber: windowInfo.number,
+                finderStateWindowID: state.windowID
+            ) else {
                 lastCaptureWasKnownChildWindow = true
                 return nil
             }
@@ -490,13 +547,51 @@ final class FinderWindowTracker: @unchecked Sendable {
         }
         stateRefreshCache.store(state, refreshedAt: Date())
 
+        performPoll(forceFinderStateRefresh: false)
+
+        if freshSnapshotRequestState.isActive {
+            let snapshot = freshSnapshot(matching: state)
+            if let snapshot {
+                completeFreshSnapshotRequest(with: snapshot)
+            } else if freshSnapshotRequestState.consumeRetryIfAvailable(
+                finderIsFrontmost: isFinderFrontmost()
+            ) {
+                hasPendingForcedStateRefresh = false
+                requestStateRefresh(forceRefresh: true)
+                return
+            } else {
+                completeFreshSnapshotRequest(with: nil)
+            }
+        }
+
         if hasPendingForcedStateRefresh {
             hasPendingForcedStateRefresh = false
             requestStateRefresh(forceRefresh: true)
-            return
+        }
+    }
+
+    private func freshSnapshot(matching state: FinderState?) -> FinderWindowSnapshot? {
+        guard isFinderFrontmost(), let state else { return nil }
+        guard let finderPID = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.finder")
+            .first?
+            .processIdentifier,
+              let windowInfo = frontmostWindowInfo(for: finderPID),
+              FinderWindowPairingPolicy.matches(
+                windowNumber: windowInfo.number,
+                finderStateWindowID: state.windowID
+              ) else {
+            return nil
         }
 
-        performPoll(forceFinderStateRefresh: false)
+        return FinderWindowSnapshot(frame: windowInfo.frame, state: state)
+    }
+
+    private func completeFreshSnapshotRequest(with snapshot: FinderWindowSnapshot?) {
+        let completion = freshSnapshotCompletion
+        freshSnapshotCompletion = nil
+        freshSnapshotRequestState.finish()
+        completion?(snapshot)
     }
 
     private func frontmostWindowInfo(for processID: pid_t) -> FinderCGWindowInfo? {

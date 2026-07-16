@@ -25,9 +25,14 @@ struct EditingFocusRegressionTests {
         testConfigMissingDiagnosticsFlagUsesDefault()
         testConfigIgnoresRemovedTrackingFlag()
         testConfigSanitizesInvalidPollingIntervals()
+        testFinderStateAcceptsFileURLFallback()
+        testFinderStateScriptProtectsDescriptionCoercion()
         testNavigationAcceptsNonTextAppleScriptResult()
         testFinderStateRefreshCacheThrottlesMotionPolling()
         testFinderPollReentrancyIsCoalesced()
+        testFreshSnapshotRequestsCoalesceAndRetryOnce()
+        testFreshFinderWindowPairingRequiresMatchingWindowID()
+        testHotKeyEditRequestRejectsStaleAndCancelledResults()
         testLiveResizeBypassesPollSuppression()
         testMotionHidingWaitsForMouseRelease()
         testFinderResizeBorderHitTesting()
@@ -317,6 +322,26 @@ struct EditingFocusRegressionTests {
         expect(executor.executeCalls == 1, "Navigation should execute exactly one AppleScript.")
     }
 
+    private static func testFinderStateAcceptsFileURLFallback() {
+        expect(
+            FinderAutomationService.parseFinderStateResponse("42\n\n\nfile:///") == FinderState(
+                displayedPath: "/",
+                resolvedPath: "/",
+                windowID: 42
+            ),
+            "Finder file URLs should recover targets that cannot coerce to aliases or text."
+        )
+    }
+
+    private static func testFinderStateScriptProtectsDescriptionCoercion() {
+        expect(
+            FinderAutomationService.currentStateScriptSource.contains(
+                "try\n        set targetDescription to (currentTarget as string)\n    end try"
+            ),
+            "Finder object descriptions that cannot coerce to text must not abort the state script."
+        )
+    }
+
     private static func testFinderStateRefreshCacheThrottlesMotionPolling() {
         var cache = FinderStateRefreshCache()
         var loadCount = 0
@@ -460,6 +485,129 @@ struct EditingFocusRegressionTests {
         expect(pendingPoll.forceRefresh, "A nested forced refresh must be preserved for the follow-up poll.")
         expect(gate.begin(forceRefresh: false), "The gate should reopen after the active poll finishes.")
         _ = gate.finish()
+    }
+
+    private static func testFreshSnapshotRequestsCoalesceAndRetryOnce() {
+        var state = FinderFreshSnapshotRequestState()
+
+        expect(
+            state.begin(isStateRefreshInFlight: false),
+            "The first fresh-snapshot request should start a Finder refresh."
+        )
+        expect(
+            !state.begin(isStateRefreshInFlight: true),
+            "Repeated hotkey requests must share the active Finder refresh."
+        )
+        expect(
+            state.consumeRetryIfAvailable(finderIsFrontmost: true),
+            "A mismatched in-flight result should permit one fresh retry."
+        )
+        expect(
+            !state.consumeRetryIfAvailable(finderIsFrontmost: true),
+            "Repeated hotkey presses must not replenish the retry allowance."
+        )
+
+        state.finish()
+        expect(
+            state.begin(isStateRefreshInFlight: false),
+            "A completed request should allow the next hotkey press to start a refresh."
+        )
+        state.finish()
+
+        expect(
+            !state.begin(isStateRefreshInFlight: true),
+            "A request should attach to a polling refresh that is already in flight."
+        )
+        expect(state.isActive, "An attached request must remain active until that refresh completes.")
+    }
+
+    private static func testFreshFinderWindowPairingRequiresMatchingWindowID() {
+        expect(
+            FinderWindowPairingPolicy.matches(windowNumber: 42, finderStateWindowID: 42),
+            "Fresh Finder state should pair with the matching frontmost window."
+        )
+        expect(
+            !FinderWindowPairingPolicy.matches(windowNumber: 41, finderStateWindowID: 42),
+            "Stale Finder state must not pair with a different frontmost window."
+        )
+        expect(
+            FinderWindowPairingPolicy.matches(windowNumber: nil, finderStateWindowID: 42),
+            "Window pairing should preserve the existing fallback when CG omits a window number."
+        )
+    }
+
+    private static func testHotKeyEditRequestRejectsStaleAndCancelledResults() {
+        var gate = HotKeyEditRequestGate()
+        let supersededRequest = gate.begin()
+        let currentRequest = gate.begin()
+
+        expect(
+            !gate.consume(
+                requestID: supersededRequest,
+                finderIsFrontmost: true,
+                hasFreshSnapshot: true
+            ),
+            "A late result from a superseded hotkey request must not begin editing."
+        )
+        expect(
+            gate.consume(
+                requestID: currentRequest,
+                finderIsFrontmost: true,
+                hasFreshSnapshot: true
+            ),
+            "The current request should begin editing with a fresh matching snapshot."
+        )
+        expect(
+            !gate.consume(
+                requestID: currentRequest,
+                finderIsFrontmost: true,
+                hasFreshSnapshot: true
+            ),
+            "A hotkey request must be consumed at most once."
+        )
+
+        let cancelledRequest = gate.begin()
+        gate.cancel()
+        expect(
+            !gate.consume(
+                requestID: cancelledRequest,
+                finderIsFrontmost: true,
+                hasFreshSnapshot: true
+            ),
+            "Switching away from Finder must invalidate a pending hotkey request."
+        )
+
+        let failedRequest = gate.begin()
+        expect(
+            !gate.consume(
+                requestID: failedRequest,
+                finderIsFrontmost: true,
+                hasFreshSnapshot: false
+            ),
+            "A failed fresh-state request must not begin editing."
+        )
+
+        let timedOutRequest = gate.begin()
+        gate.cancel(requestID: timedOutRequest)
+        expect(
+            !gate.consume(
+                requestID: timedOutRequest,
+                finderIsFrontmost: true,
+                hasFreshSnapshot: true
+            ),
+            "A fresh Finder result arriving after the hotkey timeout must be ignored."
+        )
+
+        let latestRequest = gate.begin()
+        gate.cancel(requestID: timedOutRequest)
+        expect(
+            gate.consume(
+                requestID: latestRequest,
+                finderIsFrontmost: true,
+                hasFreshSnapshot: true
+            ),
+            "A stale timeout must not cancel a newer hotkey request."
+        )
     }
 
     private static func testHotKeyRegistrationReturnsRegisterFailure() {

@@ -218,6 +218,12 @@ The shortcut is registered only while Finder is frontmost. This is crucial for
 configurations such as Command-L: Safari and other apps keep their normal
 shortcut when Finder is inactive.
 
+Pressing the shortcut does not immediately reuse cached Finder state. The
+tracker waits for an in-flight Finder read, verifies that its window ID matches
+the current frontmost Finder frame, and retries once if the window changed.
+Repeated shortcut presses replace the pending edit intent but share that same
+read, preventing a queue of forced refreshes from delaying edit mode.
+
 ## 9. Permissions and Supporting Windows
 
 - `AccessibilityPermissionManager.swift` wraps the Accessibility trust check and
