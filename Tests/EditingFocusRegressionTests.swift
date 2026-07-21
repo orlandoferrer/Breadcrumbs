@@ -37,6 +37,7 @@ struct EditingFocusRegressionTests {
         testMotionHidingWaitsForMouseRelease()
         testFinderResizeBorderHitTesting()
         testQuickLookAXWindowDetection()
+        testDragToInstallVolumeDetection()
         testHotKeyRegistrationReturnsRegisterFailure()
         testHotKeyRegistrationReturnsHandlerFailureAndCleansUp()
         testHotKeyRegistrationSuccessInstallsHandler()
@@ -468,6 +469,75 @@ struct EditingFocusRegressionTests {
                 title: nil
             ),
             "Finder's transient unknown AX window must not be classified as Quick Look."
+        )
+    }
+
+    private static func testDragToInstallVolumeDetection() {
+        let installerVolume = InstallerVolumeCharacteristics(
+            isVolumeRoot: true,
+            isLocal: true,
+            isReadOnly: true,
+            isEjectable: true,
+            isRemovable: true
+        )
+
+        expect(
+            DragToInstallVolumePolicy.shouldHideBar(
+                characteristics: installerVolume,
+                containsAppBundle: true,
+                symlinkDestinations: ["/Applications"]
+            ),
+            "A read-only installer volume with an app and Applications link should hide the bar."
+        )
+        expect(
+            !DragToInstallVolumePolicy.shouldHideBar(
+                characteristics: installerVolume,
+                containsAppBundle: false,
+                symlinkDestinations: ["/Applications"]
+            ),
+            "A mounted image without an app bundle should remain visible."
+        )
+        expect(
+            !DragToInstallVolumePolicy.shouldHideBar(
+                characteristics: installerVolume,
+                containsAppBundle: true,
+                symlinkDestinations: []
+            ),
+            "A mounted image without an Applications link should remain visible."
+        )
+
+        var externalDrive = installerVolume
+        externalDrive.isReadOnly = false
+        externalDrive.isRemovable = false
+        expect(
+            !DragToInstallVolumePolicy.shouldHideBar(
+                characteristics: externalDrive,
+                containsAppBundle: true,
+                symlinkDestinations: ["/Applications"]
+            ),
+            "A writable external drive must not be mistaken for an installer DMG."
+        )
+
+        var installerSubdirectory = installerVolume
+        installerSubdirectory.isVolumeRoot = false
+        expect(
+            !DragToInstallVolumePolicy.shouldHideBar(
+                characteristics: installerSubdirectory,
+                containsAppBundle: true,
+                symlinkDestinations: ["/Applications"]
+            ),
+            "Only an installer volume's root Finder window should hide the bar."
+        )
+
+        var networkVolume = installerVolume
+        networkVolume.isLocal = false
+        expect(
+            !DragToInstallVolumePolicy.shouldHideBar(
+                characteristics: networkVolume,
+                containsAppBundle: true,
+                symlinkDestinations: ["/Applications"]
+            ),
+            "A network volume must not be mistaken for a local installer DMG."
         )
     }
 

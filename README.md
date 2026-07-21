@@ -108,7 +108,9 @@ Run the typecheck and lightweight regression suite with:
 The suite covers editing focus and window targeting, fresh-snapshot hotkey
 coalescing, readable shortcut config, hotkey registration lifecycle, Finder
 polling/reentrancy, resize hiding, config sanitization, and Quick Look
-classification. It uses mocks and does not require Finder permissions.
+classification. It also covers drag-to-install volume classification so
+writable external and network volumes are not mistaken for installer DMGs. The
+suite uses mocks and does not require Finder permissions.
 
 ## TODO: Potential bugs and unspecified behavior
 

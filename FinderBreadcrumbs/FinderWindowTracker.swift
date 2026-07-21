@@ -194,6 +194,7 @@ final class FinderWindowTracker: @unchecked Sendable {
 
     private let config: AppConfig
     private let automationService: FinderAutomationServing
+    private let dragToInstallVolumeDetector = DragToInstallVolumeDetector()
     private let stateRefreshQueue = DispatchQueue(
         label: "com.orlando.FinderBreadcrumbs.finder-state-refresh",
         qos: .utility
@@ -226,6 +227,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     private var lastDiagnosticSignature: String?
     private var missingSnapshotGraceUntil: Date?
     private var lastCaptureWasKnownChildWindow = false
+    private var lastCaptureWasDragToInstallWindow = false
     private let missingSnapshotGraceDuration: TimeInterval = 0.25
     private let motionSettleDelay: TimeInterval = 0.15
     private let motionHidingSuppressionDuration: TimeInterval = 0.35
@@ -321,6 +323,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             lastDiagnosticSignature = nil
             missingSnapshotGraceUntil = nil
             lastCaptureWasKnownChildWindow = false
+            lastCaptureWasDragToInstallWindow = false
             cancelMotionHiding()
             if shouldRemainVisible?() == true {
                 return
@@ -338,6 +341,12 @@ final class FinderWindowTracker: @unchecked Sendable {
         logFinderWindowDiagnostics(reason: "poll")
 
         guard let snapshot = captureSnapshot(forceFinderStateRefresh: forceFinderStateRefresh) else {
+            if lastCaptureWasDragToInstallWindow {
+                cancelMotionHiding()
+                emitHidden()
+                missingSnapshotGraceUntil = nil
+                return
+            }
             if shouldRemainVisible?() == true {
                 missingSnapshotGraceUntil = nil
                 return
@@ -358,6 +367,7 @@ final class FinderWindowTracker: @unchecked Sendable {
 
         missingSnapshotGraceUntil = nil
         lastCaptureWasKnownChildWindow = false
+        lastCaptureWasDragToInstallWindow = false
         if snapshot != lastSnapshot {
             if let lastSnapshot, snapshot.frame != lastSnapshot.frame {
                 motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
@@ -471,6 +481,7 @@ final class FinderWindowTracker: @unchecked Sendable {
 
     private func captureSnapshot(forceFinderStateRefresh: Bool) -> FinderWindowSnapshot? {
         lastCaptureWasKnownChildWindow = false
+        lastCaptureWasDragToInstallWindow = false
         guard let finderPID = NSRunningApplication
             .runningApplications(withBundleIdentifier: "com.apple.finder")
             .first?
@@ -502,6 +513,13 @@ final class FinderWindowTracker: @unchecked Sendable {
                 finderStateWindowID: state.windowID
             ) else {
                 lastCaptureWasKnownChildWindow = true
+                return nil
+            }
+
+            guard !dragToInstallVolumeDetector.shouldHideBar(forPath: state.resolvedPath) else {
+                // A mounted drag-to-install DMG is technically a Finder browser
+                // window, but its path is not useful navigation UI.
+                lastCaptureWasDragToInstallWindow = true
                 return nil
             }
 
@@ -572,6 +590,9 @@ final class FinderWindowTracker: @unchecked Sendable {
 
     private func freshSnapshot(matching state: FinderState?) -> FinderWindowSnapshot? {
         guard isFinderFrontmost(), let state else { return nil }
+        guard !dragToInstallVolumeDetector.shouldHideBar(forPath: state.resolvedPath) else {
+            return nil
+        }
         guard let finderPID = NSRunningApplication
             .runningApplications(withBundleIdentifier: "com.apple.finder")
             .first?

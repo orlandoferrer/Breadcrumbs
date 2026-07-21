@@ -22,6 +22,7 @@
 		00D /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* SettingsWindowController.swift */; };
 		00E /* StatusMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* StatusMenuController.swift */; };
 		00F /* WelcomeWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* WelcomeWindowController.swift */; };
+		010 /* DragToInstallVolumeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* DragToInstallVolumeDetector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +45,7 @@
 		110 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		111 /* StatusMenuController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenuController.swift; sourceTree = "<group>"; };
 		112 /* WelcomeWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeWindowController.swift; sourceTree = "<group>"; };
+		113 /* DragToInstallVolumeDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragToInstallVolumeDetector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +78,7 @@
 				104 /* AppConfig.swift */,
 				105 /* AccessibilityPermissionManager.swift */,
 				106 /* FinderAutomationService.swift */,
+				113 /* DragToInstallVolumeDetector.swift */,
 				107 /* FinderWindowTracker.swift */,
 				108 /* HotKeyManager.swift */,
 				10F /* LoginItemManager.swift */,
@@ -189,6 +192,7 @@
 				00D /* SettingsWindowController.swift in Sources */,
 				00E /* StatusMenuController.swift in Sources */,
 				00F /* WelcomeWindowController.swift in Sources */,
+				010 /* DragToInstallVolumeDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

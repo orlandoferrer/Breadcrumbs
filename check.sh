@@ -17,6 +17,7 @@ swiftc \
   -module-cache-path "$MODULE_CACHE" \
   FinderBreadcrumbs/AppConfig.swift \
   FinderBreadcrumbs/AccessibilityPermissionManager.swift \
+  FinderBreadcrumbs/DragToInstallVolumeDetector.swift \
   FinderBreadcrumbs/FinderAutomationService.swift \
   FinderBreadcrumbs/FinderWindowTracker.swift \
   FinderBreadcrumbs/HotKeyManager.swift \
