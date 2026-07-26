@@ -239,7 +239,7 @@ struct EditingFocusRegressionTests {
             try JSONEncoder().encode(AppConfig.Shortcut.default)
         }
         let encoded = String(decoding: data, as: UTF8.self)
-        expect(encoded == #""cmd+option+l""#, "Expected shortcut encoding to use readable config strings.")
+        expect(encoded == #""cmd+l""#, "Expected the default shortcut to encode as cmd+l.")
     }
 
     private static func testConfigMissingDiagnosticsFlagUsesDefault() {
@@ -285,7 +285,10 @@ struct EditingFocusRegressionTests {
             """.utf8))
         }
 
-        expect(config.shortcut == .default, "Legacy configs with removed keys should still decode normally.")
+        expect(
+            config.shortcut == decodeShortcut(from: #""cmd+option+l""#),
+            "Legacy configs should preserve their explicitly configured shortcut."
+        )
     }
 
     private static func testConfigSanitizesInvalidPollingIntervals() {

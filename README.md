@@ -6,7 +6,7 @@ FinderBreadcrumbs is a native macOS prototype that adds a small companion path b
 
 - Tracks the frontmost Finder window and attaches a slim companion bar directly beneath it.
 - Shows the current path in `text` mode by default, with a config option for `breadcrumb`.
-- Clicks into edit mode or focuses edit mode with `Option+Command+L` while Finder is frontmost. The configurable global shortcut is registered only while Finder is active, so it does not block matching shortcuts in other apps.
+- Clicks into edit mode or focuses edit mode with `Command+L` while Finder is frontmost. The configurable global shortcut is registered only while Finder is active, so it does not block matching shortcuts in other apps.
 - Navigates the current Finder window to the typed path when you press `Return`.
 - Resolves symlinks before navigation.
 - Attempts unambiguous filesystem autocomplete when you press `Tab`.
@@ -65,7 +65,7 @@ Most user-facing settings are available from the menu-bar **Settings** window:
 The shortcut can be configured with a readable string:
 
 ```json
-"shortcut": "cmd+option+l"
+"shortcut": "cmd+l"
 ```
 
 Supported modifiers are `cmd`, `option`, `shift`, and `control`. Common keys

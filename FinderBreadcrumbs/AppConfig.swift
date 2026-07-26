@@ -24,7 +24,7 @@ struct AppConfig: Codable {
 
         static let `default` = Shortcut(
             keyCode: UInt32(kVK_ANSI_L),
-            modifiers: UInt32(optionKey | cmdKey)
+            modifiers: UInt32(cmdKey)
         )
 
         init(from decoder: Decoder) throws {

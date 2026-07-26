@@ -76,7 +76,7 @@ owned the coordinator, so neither object could be released.
 - `decodeIfPresent` lets a missing setting fall back to its default, preserving
   compatibility with older config files.
 - `AppConfig.Shortcut` has custom encoding so new files use readable values such
-  as `cmd+option+l`, while old numeric shortcut objects still decode.
+  as `cmd+l`, while old numeric shortcut objects still decode.
 
 `AppConfigLoader.load()` creates the default file when none exists. It also calls
 `sanitized()` so a zero or negative timer interval cannot accidentally create a

@@ -8,6 +8,6 @@
   "motionPollInterval" : 0.016,
   "motionTrackingDuration" : 0.75,
   "preferredBarHeight" : 34,
-  "shortcut" : "cmd+option+l",
+  "shortcut" : "cmd+l",
   "verticalGap" : 0
 }
