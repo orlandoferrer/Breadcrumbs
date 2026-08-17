@@ -87,6 +87,12 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
             set targetURL to ""
             try
                 set targetDescription to (currentTarget as string)
+            on error errorMessage
+                -- Finder can resolve some AFP folders internally but still
+                -- reject every public path/URL coercion with error -1700. The
+                -- error embeds the complete cdis/cfol object chain, so retain
+                -- it for the parser's last-resort AFP fallback below.
+                set targetDescription to errorMessage
             end try
             try
                 set targetPath to POSIX path of (currentTarget as alias)
@@ -178,6 +184,23 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
     }
 
     private static func parseFinderObjectPath(from description: String) -> String? {
+        // This runs only after the direct POSIX path and Finder file URL were
+        // unavailable. Some AFP targets fail every normal coercion with -1700,
+        // even though Finder's error contains their complete object chain, for
+        // example cfol "movies" ... cdis "home". Reconstructing that chain is
+        // preferable to hiding the bar for an otherwise readable NAS folder.
+        // Match only Finder's stable four-character class codes; the prose
+        // surrounding them is localized and must not be part of the contract.
+        let classCodedPattern = #"class (cfol|cdis). "([^"]+)""#
+        if let path = parseFinderObjectPath(
+            from: description,
+            pattern: classCodedPattern,
+            folderKind: "cfol",
+            diskKind: "cdis"
+        ) {
+            return path
+        }
+
         if description.contains(":"),
            !description.contains(" of "),
            let hfsPathStyle = CFURLPathStyle(rawValue: 1),
@@ -191,6 +214,20 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
         }
 
         let pattern = #"(folder|disk) ([^"]\S*|.+?)(?= of (?:folder|disk) |$)"#
+        return parseFinderObjectPath(
+            from: description,
+            pattern: pattern,
+            folderKind: "folder",
+            diskKind: "disk"
+        )
+    }
+
+    private static func parseFinderObjectPath(
+        from description: String,
+        pattern: String,
+        folderKind: String,
+        diskKind: String
+    ) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return nil
         }
@@ -210,9 +247,9 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
             guard match.numberOfRanges == 3 else { continue }
             let kind = nsDescription.substring(with: match.range(at: 1))
             let name = nsDescription.substring(with: match.range(at: 2))
-            if kind == "folder" {
+            if kind == folderKind {
                 folders.append(name)
-            } else if kind == "disk" {
+            } else if kind == diskKind {
                 diskName = name
             }
         }

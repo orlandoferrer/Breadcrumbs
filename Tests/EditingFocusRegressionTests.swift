@@ -26,6 +26,7 @@ struct EditingFocusRegressionTests {
         testConfigIgnoresRemovedTrackingFlag()
         testConfigSanitizesInvalidPollingIntervals()
         testFinderStateAcceptsFileURLFallback()
+        testFinderStateRecoversClassCodedAFPPath()
         testFinderStateScriptProtectsDescriptionCoercion()
         testNavigationAcceptsNonTextAppleScriptResult()
         testFinderStateRefreshCacheThrottlesMotionPolling()
@@ -337,12 +338,29 @@ struct EditingFocusRegressionTests {
         )
     }
 
+    private static func testFinderStateRecoversClassCodedAFPPath() {
+        // Captured from a live AFP Finder tab whose target was readable on disk
+        // but failed alias, text, and URL coercion with AppleScript error -1700.
+        let finderError = """
+        Can't make «class cfol» "movies" of «class cfol» "plex" of «class cfol» "Thanos" of «class cfol» "Drive" of «class cdis» "home" of application "Finder" into type string.
+        """
+        expect(
+            FinderAutomationService.parseFinderStateResponse("61\n\n\(finderError)\n") == FinderState(
+                displayedPath: "/Volumes/home/Drive/Thanos/plex/movies",
+                resolvedPath: "/Volumes/home/Drive/Thanos/plex/movies",
+                windowID: 61
+            ),
+            "Finder's class-coded AFP error should recover the complete mounted path."
+        )
+    }
+
     private static func testFinderStateScriptProtectsDescriptionCoercion() {
         expect(
-            FinderAutomationService.currentStateScriptSource.contains(
-                "try\n        set targetDescription to (currentTarget as string)\n    end try"
-            ),
-            "Finder object descriptions that cannot coerce to text must not abort the state script."
+            FinderAutomationService.currentStateScriptSource.contains("on error errorMessage")
+                && FinderAutomationService.currentStateScriptSource.contains(
+                    "set targetDescription to errorMessage"
+                ),
+            "Finder description coercion failures must be preserved for AFP path recovery."
         )
     }
 
