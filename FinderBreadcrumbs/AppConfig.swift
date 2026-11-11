@@ -27,6 +27,27 @@ struct AppConfig: Codable {
             modifiers: UInt32(cmdKey)
         )
 
+        /// Explains why a shortcut is unsafe to reserve while Finder is
+        /// frontmost, or returns `nil` when it is acceptable.
+        ///
+        /// Settings and config loading share this policy. A shortcut such as
+        /// Shift-A or Option-L would steal typed text from Finder search and
+        /// rename fields, so ordinary keys need Command or Control. Function keys
+        /// (F1-F20) never type text, so Option is enough for them.
+        var validationProblem: String? {
+            let knownModifiers = UInt32(cmdKey | optionKey | controlKey | shiftKey)
+            guard modifiers & ~knownModifiers == 0, keyCode <= 0x7F else {
+                return "The shortcut contains an unsupported key or modifier."
+            }
+            if modifiers & UInt32(cmdKey | controlKey) != 0 {
+                return nil
+            }
+            if Self.functionKeyCodes.contains(keyCode), modifiers & UInt32(optionKey) != 0 {
+                return nil
+            }
+            return "Use Command or Control (or Option with F1-F20) so the shortcut does not interfere with typing in Finder."
+        }
+
         init(from decoder: Decoder) throws {
             if let container = try? decoder.singleValueContainer(),
                let description = try? container.decode(String.self) {
@@ -116,7 +137,18 @@ struct AppConfig: Codable {
             case modifiers
         }
 
-        private static let keyCodesByName: [String: UInt32] = [
+        private static let functionKeyCodes: [UInt32] = [
+            kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+            kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20
+        ].map { UInt32($0) }
+
+        /// `f1` through `f20`, in the same order as `functionKeyCodes`.
+        private static let functionKeyNames: [(name: String, keyCode: UInt32)] =
+            functionKeyCodes.enumerated().map { ("f\($0.offset + 1)", $0.element) }
+
+        private static let keyCodesByName: [String: UInt32] = Dictionary(
+            uniqueKeysWithValues: functionKeyNames.map { ($0.name, $0.keyCode) }
+        ).merging([
             "a": UInt32(kVK_ANSI_A),
             "b": UInt32(kVK_ANSI_B),
             "c": UInt32(kVK_ANSI_C),
@@ -165,9 +197,11 @@ struct AppConfig: Codable {
             "right": UInt32(kVK_RightArrow),
             "up": UInt32(kVK_UpArrow),
             "down": UInt32(kVK_DownArrow)
-        ]
+        ]) { _, named in named }
 
-        private static let keyNamesByCode: [UInt32: String] = [
+        private static let keyNamesByCode: [UInt32: String] = Dictionary(
+            uniqueKeysWithValues: functionKeyNames.map { ($0.keyCode, $0.name) }
+        ).merging([
             UInt32(kVK_ANSI_A): "a",
             UInt32(kVK_ANSI_B): "b",
             UInt32(kVK_ANSI_C): "c",
@@ -213,7 +247,7 @@ struct AppConfig: Codable {
             UInt32(kVK_RightArrow): "right",
             UInt32(kVK_UpArrow): "up",
             UInt32(kVK_DownArrow): "down"
-        ]
+        ]) { _, named in named }
     }
 
     var displayMode: DisplayMode
@@ -266,7 +300,14 @@ struct AppConfig: Codable {
         horizontalInset = try container.decodeIfPresent(CGFloat.self, forKey: .horizontalInset) ?? defaults.horizontalInset
         verticalGap = try container.decodeIfPresent(CGFloat.self, forKey: .verticalGap) ?? defaults.verticalGap
         preferredBarHeight = try container.decodeIfPresent(CGFloat.self, forKey: .preferredBarHeight) ?? defaults.preferredBarHeight
-        shortcut = try container.decodeIfPresent(Shortcut.self, forKey: .shortcut) ?? defaults.shortcut
+        do {
+            shortcut = try container.decodeIfPresent(Shortcut.self, forKey: .shortcut) ?? defaults.shortcut
+        } catch {
+            // An unreadable shortcut falls back alone; it must not discard the
+            // other valid settings by failing the whole config decode.
+            NSLog("FinderBreadcrumbs ignored an unreadable shortcut in config: %@", String(describing: error))
+            shortcut = defaults.shortcut
+        }
         debugLogFinderWindowDiagnostics = try container.decodeIfPresent(Bool.self, forKey: .debugLogFinderWindowDiagnostics) ?? defaults.debugLogFinderWindowDiagnostics
     }
 
@@ -299,14 +340,18 @@ struct AppConfig: Codable {
     )
 
     /// Replaces timer intervals that would cause an invalid or continuously
-    /// firing `Timer`. Other numeric settings intentionally remain flexible so
-    /// advanced users can experiment with layout and motion behavior.
+    /// firing `Timer`, and a shortcut rejected by `Shortcut.validationProblem`.
+    /// Other numeric settings intentionally remain flexible so advanced users
+    /// can experiment with layout and motion behavior.
     func sanitized() -> AppConfig {
         var result = self
         let defaults = AppConfig.default
         result.activePollInterval = Self.validInterval(activePollInterval, fallback: defaults.activePollInterval)
         result.motionPollInterval = Self.validInterval(motionPollInterval, fallback: defaults.motionPollInterval)
         result.inactivePollInterval = Self.validInterval(inactivePollInterval, fallback: defaults.inactivePollInterval)
+        if shortcut.validationProblem != nil {
+            result.shortcut = defaults.shortcut
+        }
         return result
     }
 
@@ -330,7 +375,16 @@ enum AppConfigLoader {
         }
 
         do {
-            return try JSONDecoder().decode(AppConfig.self, from: data).sanitized()
+            let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+            if let problem = decoded.shortcut.validationProblem {
+                NSLog(
+                    "FinderBreadcrumbs replaced configured shortcut %@ with %@: %@",
+                    decoded.shortcut.description,
+                    AppConfig.Shortcut.default.description,
+                    problem
+                )
+            }
+            return decoded.sanitized()
         } catch {
             NSLog(
                 "FinderBreadcrumbs could not decode config at %@, using defaults: %@",

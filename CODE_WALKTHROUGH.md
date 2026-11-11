@@ -82,6 +82,13 @@ owned the coordinator, so neither object could be released.
 `sanitized()` so a zero or negative timer interval cannot accidentally create a
 busy loop that consumes a CPU core.
 
+`Shortcut.validationProblem` is the single shortcut policy shared by config
+loading and the Settings window. Ordinary keys need Command or Control so a
+shortcut such as Shift-A cannot steal text typed into Finder search or rename
+fields; function keys may use Option instead. `sanitized()` replaces only an
+invalid shortcut, and an unreadable shortcut string falls back on its own, so
+one bad value never discards the rest of the config.
+
 The live config is stored at:
 
 ```text
@@ -138,6 +145,31 @@ The tracker has three polling speeds:
 rate. `FinderPollReentrancyGate` coalesces a nested refresh request into one
 follow-up poll rather than recursively entering mutable tracking state.
 
+Every Finder read gets an increasing ID when it starts. The cache uses those
+IDs and timestamps to answer `lookup` with one of four results:
+
+- `.current(state)`: the path is fresh (younger than the greater of 250 ms or
+  two active polling intervals), or a visible bar is waiting on a read that
+  started less than 1.5 seconds ago. Ordinary latency never flickers the label.
+- `.pending`: nothing has confirmed the path yet and the bar is hidden, for
+  example after returning to Finder, switching Finder windows, or Quick Look.
+  The bar stays hidden until a read that started after that moment finishes,
+  instead of flashing a placeholder or showing an outdated path.
+- `.unavailable`: Finder confirmed a failure after the path expired, or a read
+  is stuck beyond its grace period. The view model clears the old path, cancels
+  editing without stealing focus, and shows `Finder location unavailable`. A
+  failure never earns read grace, so repeated failures cannot keep a path.
+- `.unknownWindow`: the cache has no path for this window. A different window
+  never inherits a cached path or unavailable snapshot from the previous window.
+
+A successful read restores normal display and editing.
+
+All system access goes through the small `FinderTrackingEnvironment` protocol:
+the clock, whether Finder is frontmost, the frontmost window from Core Graphics,
+and the asynchronous Apple Event read. `SystemFinderTrackingEnvironment` is the
+production implementation. The regression tests substitute a scripted Finder,
+so the real tracker code runs without timers or a live Finder.
+
 ### Motion hiding
 
 The overlay intentionally disappears during a move or resize. Accessibility
@@ -184,6 +216,10 @@ normalizes the path, resolves symbolic links, and asks `FinderAutomationService`
 to navigate the pinned window. A failed navigation leaves edit mode active and
 plays the standard macOS alert sound.
 
+If the pinned window has closed, navigation fails rather than selecting another
+window or opening a replacement. Calls with no window ID may still open a Finder
+window when needed.
+
 Tab completion lists the parent directory and completes only when exactly one
 directory starts with the typed fragment. Ambiguous matches do nothing.
 
@@ -218,11 +254,21 @@ The shortcut is registered only while Finder is frontmost. This is crucial for
 configurations such as Command-L: Safari and other apps keep their normal
 shortcut when Finder is inactive.
 
-Pressing the shortcut does not immediately reuse cached Finder state. The
-tracker waits for an in-flight Finder read, verifies that its window ID matches
-the current frontmost Finder frame, and retries once if the window changed.
-Repeated shortcut presses replace the pending edit intent but share that same
-read, preventing a queue of forced refreshes from delaying edit mode.
+Pressing the shortcut does not reuse cached Finder state. The press records the
+next read ID, and only a read that started after the press may open the editor.
+A routine polling read that was already running is rejected even when it
+reports the same window, because the folder may have changed in between. The
+tracker lets that read finish, then starts one newer read. It also verifies
+that the window ID matches the current frontmost Finder frame and retries once
+if the window changed. Repeated presses and forced refreshes share the single
+running read plus at most one follow-up, so they never build a queue.
+Leaving Finder or the coordinator timeout calls `cancelFreshSnapshotRequest()`,
+so a read that finishes later cannot open the editor.
+
+Shortcut completion also checks whether the cache accepted that read and still
+considers it current after polling. This matters when the poll discovers a
+window switch: even a result naming the new window may have started too early.
+Such a result uses the same bounded retry as a window mismatch.
 
 ## 9. Permissions and Supporting Windows
 
@@ -231,7 +277,17 @@ read, preventing a queue of forced refreshes from delaying edit mode.
 - `WelcomeWindowController.swift` displays those states. Accessibility is shown
   as Limited rather than Not granted because the polling fallback still works.
 - `SettingsWindowController.swift` hosts the settings form and bridges a custom
-  AppKit shortcut recorder into SwiftUI.
+  AppKit shortcut recorder into SwiftUI. Recording starts from a click (or
+  Space), never from initial focus, and continues only while the recorder is
+  first responder in the key window. Escape cancels, Tab and Shift-Tab move
+  focus, Return reaches the default Save button, and deactivating the window
+  stops recording. `SettingsSaveTransaction` validates the shortcut and briefly
+  registers it before changing Enable at login, then restores the normal
+  Finder-only registration so no shortcut stays reserved in other apps.
+  Save also checks the final registration after writing the config. A failure
+  attempts to restore the previous config, login setting, and hotkey. Recovery
+  attempts every step even if another fails, and the Settings error identifies
+  any partial changes it could not undo.
 - `LoginItemManager.swift` wraps `SMAppService`, Apple's modern launch-at-login API.
 - `StatusMenuController.swift` owns the menu-bar icon and menu actions.
 
@@ -266,6 +322,9 @@ Run all checks with:
 The script first typechecks every production Swift file, then compiles and runs
 the regression executable. Tests use mock objects at protocol boundaries so no
 real Finder window or permission prompt is required.
+Tracker tests use a scripted `FinderTrackingEnvironment` with a manual clock
+and finish each Finder read explicitly, which makes timing-sensitive cases
+such as slow, failed, or pre-shortcut reads deterministic.
 
 ## 12. Known Design Constraints
 

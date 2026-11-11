@@ -66,9 +66,13 @@ struct HotKeyEditRequestGate {
         generation &+= 1
     }
 
-    mutating func cancel(requestID: UInt) {
-        guard requestID == generation else { return }
+    /// Returns `true` only when `requestID` was still the current request, so a
+    /// stale timeout never cancels work that belongs to a newer shortcut press.
+    @discardableResult
+    mutating func cancel(requestID: UInt) -> Bool {
+        guard requestID == generation else { return false }
         generation &+= 1
+        return true
     }
 
     mutating func consume(

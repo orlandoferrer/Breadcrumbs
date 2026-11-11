@@ -90,13 +90,37 @@ enum QuickLookAXWindowDetector {
 }
 
 /// Throttles expensive Apple Event reads while allowing window frames to be
-/// sampled at the faster motion interval.
+/// sampled at the faster motion interval, and decides whether a cached path may
+/// still be shown.
+///
+/// Every read receives an increasing ID when it starts. The IDs let the cache
+/// tell a slow read from a failed one, and reject a read that started before
+/// Finder was activated or switched windows.
 struct FinderStateRefreshCache {
-    private var cachedState: FinderState?
-    private var lastRefreshDate: Date?
+    /// What the tracker may show for the frontmost Finder window.
+    enum Lookup: Equatable {
+        /// A path that may be displayed and edited.
+        case current(FinderState)
+        /// No suitable read has finished yet. A hidden overlay stays hidden
+        /// instead of flashing an unavailable placeholder.
+        case pending
+        /// The window is known, but its path expired or Finder failed to read it.
+        case unavailable
+        /// The cache has no path for this window, so nothing may be paired with it.
+        case unknownWindow
+    }
 
-    var state: FinderState? {
-        cachedState
+    private var lastRefreshDate: Date?
+    private(set) var lastKnownState: FinderState?
+    private var lastSuccessfulRefreshDate: Date?
+    private var hasFailedSinceLastSuccess = false
+    private var lastAcceptedReadID: UInt?
+    private(set) var nextReadID: UInt = 1
+    private var inFlightRead: (id: UInt, startedAt: Date)?
+    private var freshReadRequirement: (minimumReadID: UInt, since: Date)?
+
+    var isReadInFlight: Bool {
+        inFlightRead != nil
     }
 
     func shouldRefresh(
@@ -104,15 +128,98 @@ struct FinderStateRefreshCache {
         minimumInterval: TimeInterval,
         forceRefresh: Bool
     ) -> Bool {
+        if let freshReadRequirement,
+           (inFlightRead?.id ?? 0) < freshReadRequirement.minimumReadID {
+            // Nothing that can satisfy the requirement is running yet.
+            return true
+        }
         let cacheExpired = lastRefreshDate.map {
             now.timeIntervalSince($0) >= minimumInterval
         } ?? true
         return forceRefresh || cacheExpired
     }
 
-    mutating func store(_ state: FinderState?, refreshedAt date: Date) {
-        cachedState = state
+    /// Records the start of an asynchronous Finder read and returns its ID.
+    mutating func beginRead(at date: Date) -> UInt {
+        let readID = nextReadID
+        nextReadID &+= 1
+        inFlightRead = (readID, date)
+        return readID
+    }
+
+    /// Records a finished read; `nil` is a confirmed failure. A read that began
+    /// before `requireFreshRead(at:)` is discarded because it may describe
+    /// Finder as it was before an activation or window switch.
+    mutating func completeRead(_ readID: UInt, state: FinderState?, at date: Date) {
+        if inFlightRead?.id == readID {
+            inFlightRead = nil
+        }
+        if let freshReadRequirement {
+            guard readID >= freshReadRequirement.minimumReadID else { return }
+            self.freshReadRequirement = nil
+        }
+
         lastRefreshDate = date
+        lastAcceptedReadID = readID
+        if let state {
+            lastKnownState = state
+            lastSuccessfulRefreshDate = date
+            hasFailedSinceLastSuccess = false
+        } else {
+            hasFailedSinceLastSuccess = true
+        }
+    }
+
+    /// Accepts only reads that start from now on until one of them finishes.
+    mutating func requireFreshRead(at date: Date) {
+        freshReadRequirement = (nextReadID, date)
+    }
+
+    /// A read accepted earlier can become obsolete when the following poll
+    /// discovers a window switch. Editor activation must check after that poll.
+    func isCurrentRead(_ readID: UInt) -> Bool {
+        lastAcceptedReadID == readID && freshReadRequirement == nil
+    }
+
+    /// `isShowingPath` is true while the overlay currently displays a path for
+    /// this window; only then may a slow read keep that path briefly.
+    func lookup(
+        windowNumber: Int?,
+        now: Date,
+        maximumAge: TimeInterval,
+        pendingReadGrace: TimeInterval,
+        isShowingPath: Bool
+    ) -> Lookup {
+        guard let lastKnownState,
+              let lastSuccessfulRefreshDate,
+              FinderWindowPairingPolicy.matches(
+                windowNumber: windowNumber,
+                finderStateWindowID: lastKnownState.windowID
+              ) else { return .unknownWindow }
+
+        // When did the outstanding read that could confirm this path begin?
+        let pendingSince: Date?
+        if let freshReadRequirement {
+            pendingSince = freshReadRequirement.since
+        } else if now.timeIntervalSince(lastSuccessfulRefreshDate) < maximumAge {
+            return .current(lastKnownState)
+        } else if hasFailedSinceLastSuccess {
+            // A failure can never renew a path, even while a retry is running.
+            return .unavailable
+        } else {
+            pendingSince = inFlightRead?.startedAt
+        }
+
+        // A hidden overlay waits for Finder rather than showing a placeholder
+        // caused only by inactivity, Quick Look, or a window switch.
+        guard isShowingPath else { return .pending }
+
+        // A visible bar keeps its path through ordinary read latency, but only
+        // briefly, so a stuck read cannot keep an old path editable.
+        if let pendingSince, now.timeIntervalSince(pendingSince) < pendingReadGrace {
+            return .current(lastKnownState)
+        }
+        return .unavailable
     }
 }
 
@@ -146,22 +253,38 @@ struct FinderPollReentrancyGate {
     }
 }
 
-/// Coalesces repeated edit requests onto one Finder state read and permits one
-/// retry when that read belongs to a window that is no longer frontmost.
+/// Tracks the pending edit-shortcut request.
+///
+/// A press accepts only Finder reads that started after it, so a routine poll
+/// already in flight cannot open the editor even when it reports the same
+/// window. Repeated presses share one request, wait for at most one follow-up
+/// read, and do not earn extra retries.
 struct FinderFreshSnapshotRequestState {
     private(set) var isActive = false
     private var canRetry = false
+    private var minimumReadID: UInt = 0
 
-    mutating func begin(isStateRefreshInFlight: Bool) -> Bool {
-        guard !isActive else { return false }
-        isActive = true
-        canRetry = true
-        return !isStateRefreshInFlight
+    /// Returns `true` when the caller should start a read now. Otherwise the
+    /// in-flight read must finish first, and a newer read is started then.
+    mutating func begin(nextReadID: UInt, isReadInFlight: Bool) -> Bool {
+        if !isActive {
+            isActive = true
+            canRetry = true
+        }
+        minimumReadID = nextReadID
+        return !isReadInFlight
     }
 
-    mutating func consumeRetryIfAvailable(finderIsFrontmost: Bool) -> Bool {
+    func accepts(readID: UInt) -> Bool {
+        isActive && readID >= minimumReadID
+    }
+
+    /// Allows one more read, started after `rejectedReadID`, when an accepted
+    /// read belonged to a window that is no longer frontmost.
+    mutating func consumeRetryIfAvailable(finderIsFrontmost: Bool, after rejectedReadID: UInt) -> Bool {
         guard isActive, canRetry, finderIsFrontmost else { return false }
         canRetry = false
+        minimumReadID = rejectedReadID &+ 1
         return true
     }
 
@@ -174,6 +297,93 @@ struct FinderFreshSnapshotRequestState {
 enum FinderWindowPairingPolicy {
     static func matches(windowNumber: Int?, finderStateWindowID: Int) -> Bool {
         windowNumber == nil || windowNumber == finderStateWindowID
+    }
+}
+
+/// The system services `FinderWindowTracker` depends on.
+///
+/// Production reads AppKit, Core Graphics, and Apple Events. Regression tests
+/// supply a scripted Finder and clock, so the real polling and read-sequencing
+/// code runs without permissions, timers, or a live Finder.
+protocol FinderTrackingEnvironment: AnyObject {
+    var now: Date { get }
+    var isFinderFrontmost: Bool { get }
+    /// `false` skips Accessibility observers, global mouse monitors, and
+    /// repeating timers; tests then drive the tracker through `poll()`.
+    var observesSystemEvents: Bool { get }
+    func frontmostFinderWindow() -> FinderCGWindowInfo?
+    /// Reads Finder state asynchronously and calls `completion` on the main queue.
+    func readFinderState(_ completion: @escaping @Sendable (FinderState?) -> Void)
+}
+
+final class SystemFinderTrackingEnvironment: FinderTrackingEnvironment, @unchecked Sendable {
+    private let automationService: FinderAutomationServing
+    private let stateRefreshQueue = DispatchQueue(
+        label: "com.orlando.FinderBreadcrumbs.finder-state-refresh",
+        qos: .utility
+    )
+
+    init(automationService: FinderAutomationServing) {
+        self.automationService = automationService
+    }
+
+    var now: Date {
+        Date()
+    }
+
+    var isFinderFrontmost: Bool {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
+    }
+
+    var observesSystemEvents: Bool {
+        true
+    }
+
+    func frontmostFinderWindow() -> FinderCGWindowInfo? {
+        guard let finderPID = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.finder")
+            .first?
+            .processIdentifier else {
+            return nil
+        }
+
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        for windowInfo in windowInfoList {
+            guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID == finderPID,
+                  let layer = windowInfo[kCGWindowLayer as String] as? Int,
+                  layer == 0,
+                  let alpha = windowInfo[kCGWindowAlpha as String] as? Double,
+                  alpha > 0,
+                  let boundsDictionary = windowInfo[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary),
+                  frame.width > 200,
+                  frame.height > 100 else {
+                continue
+            }
+
+            let title = windowInfo[kCGWindowName as String] as? String
+            let number = windowInfo[kCGWindowNumber as String] as? Int
+            return FinderCGWindowInfo(number: number, title: title, layer: layer, alpha: alpha, frame: frame)
+        }
+
+        return nil
+    }
+
+    func readFinderState(_ completion: @escaping @Sendable (FinderState?) -> Void) {
+        let automationService = automationService
+        // Only AppleScript execution happens off-main. All cache and lifecycle
+        // state returns to the main queue before mutation.
+        stateRefreshQueue.async {
+            let state = automationService.currentState()
+            DispatchQueue.main.async {
+                completion(state)
+            }
+        }
     }
 }
 
@@ -193,17 +403,12 @@ final class FinderWindowTracker: @unchecked Sendable {
     var shouldRemainVisible: (() -> Bool)?
 
     private let config: AppConfig
-    private let automationService: FinderAutomationServing
+    private let environment: FinderTrackingEnvironment
     private let dragToInstallVolumeDetector = DragToInstallVolumeDetector()
-    private let stateRefreshQueue = DispatchQueue(
-        label: "com.orlando.FinderBreadcrumbs.finder-state-refresh",
-        qos: .utility
-    )
     private var timer: Timer?
     private var isRunning = false
     private var lastSnapshot: FinderWindowSnapshot?
     private var stateRefreshCache = FinderStateRefreshCache()
-    private var isStateRefreshInFlight = false
     private var hasPendingForcedStateRefresh = false
     private var freshSnapshotCompletion: ((FinderWindowSnapshot?) -> Void)?
     private var freshSnapshotRequestState = FinderFreshSnapshotRequestState()
@@ -228,20 +433,32 @@ final class FinderWindowTracker: @unchecked Sendable {
     private var missingSnapshotGraceUntil: Date?
     private var lastCaptureWasKnownChildWindow = false
     private var lastCaptureWasDragToInstallWindow = false
+    private var lastCaptureWasAwaitingFreshRead = false
+    private var hasCapturedSinceActivation = false
+    private var lastCapturedWindowNumber: Int?
     private let missingSnapshotGraceDuration: TimeInterval = 0.25
+    /// How long a visible bar may keep its path while a Finder read is running.
+    private let pendingReadGraceDuration: TimeInterval = 1.5
     private let motionSettleDelay: TimeInterval = 0.15
     private let motionHidingSuppressionDuration: TimeInterval = 0.35
 
-    init(config: AppConfig, automationService: FinderAutomationServing) {
+    convenience init(config: AppConfig, automationService: FinderAutomationServing) {
+        self.init(
+            config: config,
+            environment: SystemFinderTrackingEnvironment(automationService: automationService)
+        )
+    }
+
+    init(config: AppConfig, environment: FinderTrackingEnvironment) {
         self.config = config
-        self.automationService = automationService
+        self.environment = environment
     }
 
     func start() {
         guard !isRunning else { return }
         isRunning = true
         installGlobalMouseMonitor()
-        rescheduleTimer(finderIsFrontmost: isFinderFrontmost())
+        rescheduleTimer(finderIsFrontmost: environment.isFinderFrontmost)
     }
 
     func stop() {
@@ -261,10 +478,10 @@ final class FinderWindowTracker: @unchecked Sendable {
         performPoll(forceFinderStateRefresh: true)
     }
 
-    /// Completes only after Finder Automation has returned fresh state and that
-    /// state has been paired with the current frontmost Finder window frame.
+    /// Completes only after a Finder read that started after this call has
+    /// returned state paired with the current frontmost Finder window frame.
     func requestFreshSnapshot(_ completion: @escaping (FinderWindowSnapshot?) -> Void) {
-        guard isRunning, isFinderFrontmost() else {
+        guard isRunning, environment.isFinderFrontmost else {
             completion(nil)
             return
         }
@@ -272,7 +489,8 @@ final class FinderWindowTracker: @unchecked Sendable {
         let supersededCompletion = freshSnapshotCompletion
         freshSnapshotCompletion = completion
         let shouldStartRefresh = freshSnapshotRequestState.begin(
-            isStateRefreshInFlight: isStateRefreshInFlight
+            nextReadID: stateRefreshCache.nextReadID,
+            isReadInFlight: stateRefreshCache.isReadInFlight
         )
         supersededCompletion?(nil)
 
@@ -281,8 +499,16 @@ final class FinderWindowTracker: @unchecked Sendable {
         }
     }
 
+    /// Abandons a pending shortcut request after an app switch or timeout, so a
+    /// read that finishes later cannot open the editor.
+    func cancelFreshSnapshotRequest() {
+        guard freshSnapshotRequestState.isActive else { return }
+        completeFreshSnapshotRequest(with: nil)
+    }
+
+    /// The repeating timer entry point. Tests call it directly.
     @objc
-    private func poll() {
+    func poll() {
         performPoll(forceFinderStateRefresh: false)
     }
 
@@ -306,7 +532,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func performSinglePoll(forceFinderStateRefresh: Bool) {
-        let finderIsFrontmost = isFinderFrontmost()
+        let finderIsFrontmost = environment.isFinderFrontmost
         if finderIsFrontmost {
             syncAccessibilityObservation()
         } else {
@@ -324,6 +550,10 @@ final class FinderWindowTracker: @unchecked Sendable {
             missingSnapshotGraceUntil = nil
             lastCaptureWasKnownChildWindow = false
             lastCaptureWasDragToInstallWindow = false
+            lastCaptureWasAwaitingFreshRead = false
+            hasCapturedSinceActivation = false
+            // A shortcut press belongs to the Finder session where it happened.
+            cancelFreshSnapshotRequest()
             cancelMotionHiding()
             if shouldRemainVisible?() == true {
                 return
@@ -351,6 +581,12 @@ final class FinderWindowTracker: @unchecked Sendable {
                 missingSnapshotGraceUntil = nil
                 return
             }
+            if lastCaptureWasAwaitingFreshRead {
+                // Keep a hidden bar hidden until Finder answers, instead of
+                // flashing "Finder location unavailable" after inactivity.
+                missingSnapshotGraceUntil = nil
+                return
+            }
             if isTemporarilyHiddenForMotion, !lastCaptureWasKnownChildWindow {
                 pendingMotionSnapshot = pendingMotionSnapshot ?? lastSnapshot
                 scheduleMotionSettleRefreshIfNeeded()
@@ -370,7 +606,7 @@ final class FinderWindowTracker: @unchecked Sendable {
         lastCaptureWasDragToInstallWindow = false
         if snapshot != lastSnapshot {
             if let lastSnapshot, snapshot.frame != lastSnapshot.frame {
-                motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
+                motionTrackingDeadline = environment.now.addingTimeInterval(config.motionTrackingDuration)
                 let changeSource: FinderMotionChangeSource =
                     snapshot.frame.size == lastSnapshot.frame.size ? .polledMove : .polledResize
                 if shouldHideForPolledMotionChange(source: changeSource) {
@@ -397,13 +633,16 @@ final class FinderWindowTracker: @unchecked Sendable {
 
     private func rescheduleTimer(finderIsFrontmost: Bool) {
         timer?.invalidate()
+        timer = nil
         isUsingActiveInterval = finderIsFrontmost
         let interval = pollInterval(finderIsFrontmost: finderIsFrontmost)
         currentInterval = interval
-        timer = Timer.scheduledTimer(timeInterval: interval, target: self, selector: #selector(poll), userInfo: nil, repeats: true)
-        if let timer {
-            timer.tolerance = tolerance(for: interval, finderIsFrontmost: finderIsFrontmost)
-            RunLoop.main.add(timer, forMode: .common)
+        if environment.observesSystemEvents {
+            timer = Timer.scheduledTimer(timeInterval: interval, target: self, selector: #selector(poll), userInfo: nil, repeats: true)
+            if let timer {
+                timer.tolerance = tolerance(for: interval, finderIsFrontmost: finderIsFrontmost)
+                RunLoop.main.add(timer, forMode: .common)
+            }
         }
         poll()
     }
@@ -419,7 +658,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             return config.inactivePollInterval
         }
 
-        if let motionTrackingDeadline, motionTrackingDeadline > Date() {
+        if let motionTrackingDeadline, motionTrackingDeadline > environment.now {
             return config.motionPollInterval
         }
 
@@ -444,7 +683,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             return false
         }
 
-        let now = Date()
+        let now = environment.now
         if let missingSnapshotGraceUntil {
             return missingSnapshotGraceUntil > now
         }
@@ -482,18 +721,20 @@ final class FinderWindowTracker: @unchecked Sendable {
     private func captureSnapshot(forceFinderStateRefresh: Bool) -> FinderWindowSnapshot? {
         lastCaptureWasKnownChildWindow = false
         lastCaptureWasDragToInstallWindow = false
-        guard let finderPID = NSRunningApplication
-            .runningApplications(withBundleIdentifier: "com.apple.finder")
-            .first?
-            .processIdentifier else {
+        lastCaptureWasAwaitingFreshRead = false
+        guard let windowInfo = environment.frontmostFinderWindow() else {
             return nil
         }
 
-        guard let windowInfo = frontmostWindowInfo(for: finderPID) else {
-            return nil
+        let now = environment.now
+        if !hasCapturedSinceActivation || windowInfo.number != lastCapturedWindowNumber {
+            // Finder may have changed while inactive, and another window has
+            // its own path. Neither may rely on a read that started earlier.
+            hasCapturedSinceActivation = true
+            lastCapturedWindowNumber = windowInfo.number
+            stateRefreshCache.requireFreshRead(at: now)
         }
 
-        let now = Date()
         if stateRefreshCache.shouldRefresh(
             now: now,
             minimumInterval: config.activePollInterval,
@@ -502,102 +743,101 @@ final class FinderWindowTracker: @unchecked Sendable {
             requestStateRefresh(forceRefresh: forceFinderStateRefresh)
         }
 
-        let state = stateRefreshCache.state
+        let lookup = stateRefreshCache.lookup(
+            windowNumber: windowInfo.number,
+            now: now,
+            maximumAge: max(missingSnapshotGraceDuration, config.activePollInterval * 2),
+            pendingReadGrace: pendingReadGraceDuration,
+            isShowingPath: (!isOverlayHidden || isTemporarilyHiddenForMotion) && lastSnapshot?.state != nil
+        )
 
-        if let state {
-            // Never pair a path from one Finder window with another window's
-            // frame. Temporary child windows can appear ahead of the browser
-            // window in the Core Graphics list.
-            guard FinderWindowPairingPolicy.matches(
-                windowNumber: windowInfo.number,
-                finderStateWindowID: state.windowID
-            ) else {
-                lastCaptureWasKnownChildWindow = true
-                return nil
-            }
-
-            guard !dragToInstallVolumeDetector.shouldHideBar(forPath: state.resolvedPath) else {
-                // A mounted drag-to-install DMG is technically a Finder browser
-                // window, but its path is not useful navigation UI.
-                lastCaptureWasDragToInstallWindow = true
-                return nil
-            }
-
-            return FinderWindowSnapshot(frame: windowInfo.frame, state: state)
+        let state: FinderState?
+        switch lookup {
+        case .current(let currentState):
+            state = currentState
+        case .unavailable:
+            // Keep the window ID so its bar can say the location is unavailable
+            // without borrowing a path from a different Finder window.
+            state = nil
+        case .pending:
+            lastCaptureWasAwaitingFreshRead = true
+            return nil
+        case .unknownWindow:
+            // Never pair a path from one Finder window with another window frame.
+            // Temporary child windows can appear ahead of the browser window in
+            // the Core Graphics list.
+            lastCaptureWasKnownChildWindow = windowInfo.number != nil
+            return nil
         }
 
-        if let lastSnapshot,
-           let windowNumber = windowInfo.number,
-           windowNumber == lastSnapshot.state?.windowID {
-            return FinderWindowSnapshot(frame: windowInfo.frame, state: lastSnapshot.state)
+        if let installerPath = (state ?? stateRefreshCache.lastKnownState)?.resolvedPath,
+           dragToInstallVolumeDetector.shouldHideBar(forPath: installerPath) {
+            // A mounted drag-to-install DMG is technically a Finder browser
+            // window, but its path is not useful navigation UI. Keep it hidden
+            // even when its cached path expires.
+            lastCaptureWasDragToInstallWindow = true
+            return nil
         }
 
-        if windowInfo.number != nil {
-            lastCaptureWasKnownChildWindow = true
-        }
-        return nil
+        return FinderWindowSnapshot(frame: windowInfo.frame, state: state)
     }
 
     private func requestStateRefresh(forceRefresh: Bool) {
         guard isRunning else { return }
-        guard !isStateRefreshInFlight else {
+        guard !stateRefreshCache.isReadInFlight else {
             hasPendingForcedStateRefresh = hasPendingForcedStateRefresh || forceRefresh
             return
         }
 
-        isStateRefreshInFlight = true
-        let automationService = automationService
-        // Only AppleScript execution happens off-main. All cache and lifecycle
-        // state returns to the main queue before mutation.
-        stateRefreshQueue.async { [weak self] in
-            let state = automationService.currentState()
-            DispatchQueue.main.async { [weak self] in
-                self?.completeStateRefresh(state)
-            }
+        let readID = stateRefreshCache.beginRead(at: environment.now)
+        environment.readFinderState { [weak self] state in
+            self?.completeStateRefresh(readID: readID, state: state)
         }
     }
 
-    private func completeStateRefresh(_ state: FinderState?) {
-        isStateRefreshInFlight = false
+    private func completeStateRefresh(readID: UInt, state: FinderState?) {
+        stateRefreshCache.completeRead(readID, state: state, at: environment.now)
         guard isRunning else {
             hasPendingForcedStateRefresh = false
             return
         }
-        stateRefreshCache.store(state, refreshedAt: Date())
 
         performPoll(forceFinderStateRefresh: false)
 
-        if freshSnapshotRequestState.isActive {
-            let snapshot = freshSnapshot(matching: state)
-            if let snapshot {
+        if freshSnapshotRequestState.accepts(readID: readID) {
+            if stateRefreshCache.isCurrentRead(readID),
+               let snapshot = freshSnapshot(matching: state) {
                 completeFreshSnapshotRequest(with: snapshot)
             } else if freshSnapshotRequestState.consumeRetryIfAvailable(
-                finderIsFrontmost: isFinderFrontmost()
+                finderIsFrontmost: environment.isFinderFrontmost,
+                after: readID
             ) {
-                hasPendingForcedStateRefresh = false
-                requestStateRefresh(forceRefresh: true)
-                return
+                hasPendingForcedStateRefresh = true
             } else {
                 completeFreshSnapshotRequest(with: nil)
             }
+        } else if freshSnapshotRequestState.isActive {
+            // This result predates the latest press. A post-press result
+            // rejected by the cache instead uses the bounded retry above.
+            hasPendingForcedStateRefresh = true
         }
 
         if hasPendingForcedStateRefresh {
             hasPendingForcedStateRefresh = false
-            requestStateRefresh(forceRefresh: true)
+            // A read started by the poll above already began after every pending
+            // request, so it satisfies them without queueing another read.
+            if !stateRefreshCache.isReadInFlight {
+                requestStateRefresh(forceRefresh: true)
+            }
         }
     }
 
     private func freshSnapshot(matching state: FinderState?) -> FinderWindowSnapshot? {
-        guard isFinderFrontmost(), let state else { return nil }
+        guard environment.isFinderFrontmost, let state else { return nil }
         guard !dragToInstallVolumeDetector.shouldHideBar(forPath: state.resolvedPath) else {
             return nil
         }
-        guard let finderPID = NSRunningApplication
-            .runningApplications(withBundleIdentifier: "com.apple.finder")
-            .first?
-            .processIdentifier,
-              let windowInfo = frontmostWindowInfo(for: finderPID),
+        guard let windowInfo = environment.frontmostFinderWindow(),
               FinderWindowPairingPolicy.matches(
                 windowNumber: windowInfo.number,
                 finderStateWindowID: state.windowID
@@ -615,40 +855,8 @@ final class FinderWindowTracker: @unchecked Sendable {
         completion?(snapshot)
     }
 
-    private func frontmostWindowInfo(for processID: pid_t) -> FinderCGWindowInfo? {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
-
-        for windowInfo in windowInfoList {
-            guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID == processID,
-                  let layer = windowInfo[kCGWindowLayer as String] as? Int,
-                  layer == 0,
-                  let alpha = windowInfo[kCGWindowAlpha as String] as? Double,
-                  alpha > 0,
-                  let boundsDictionary = windowInfo[kCGWindowBounds as String] as? [String: Any],
-                  let frame = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary),
-                  frame.width > 200,
-                  frame.height > 100 else {
-                continue
-            }
-
-            let title = windowInfo[kCGWindowName as String] as? String
-            let number = windowInfo[kCGWindowNumber as String] as? Int
-            return FinderCGWindowInfo(number: number, title: title, layer: layer, alpha: alpha, frame: frame)
-        }
-
-        return nil
-    }
-
-    private func isFinderFrontmost() -> Bool {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
-    }
-
     private func installGlobalMouseMonitor() {
-        guard globalMouseMonitor == nil else { return }
+        guard environment.observesSystemEvents, globalMouseMonitor == nil else { return }
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp]
         ) { [weak self] event in
@@ -667,7 +875,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     private func handleGlobalInputEvent(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
-            guard isFinderFrontmost(), let lastSnapshot else { return }
+            guard environment.isFinderFrontmost, let lastSnapshot else { return }
             let mousePoint = windowServerPoint(fromAppKitPoint: NSEvent.mouseLocation)
             guard FinderResizeHitTester.isResizeBorderHit(
                 point: mousePoint,
@@ -691,6 +899,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func syncAccessibilityObservation() {
+        guard environment.observesSystemEvents else { return }
         guard AccessibilityPermissionManager.isTrusted else {
             if !didPromptForAccessibilityThisRun {
                 didPromptForAccessibilityThisRun = true
@@ -819,11 +1028,11 @@ final class FinderWindowTracker: @unchecked Sendable {
             scheduleFrameBurstRefreshes()
         case kAXMovedNotification,
              kAXResizedNotification:
-            motionTrackingDeadline = Date().addingTimeInterval(config.motionTrackingDuration)
+            motionTrackingDeadline = environment.now.addingTimeInterval(config.motionTrackingDuration)
             if FinderMotionHidingPolicy.shouldHide(
                 source: .accessibilityNotification,
                 suppressionDeadline: suppressMotionHidingUntil,
-                now: Date()
+                now: environment.now
             ) {
                 beginMotionHiding()
             }
@@ -893,7 +1102,7 @@ final class FinderWindowTracker: @unchecked Sendable {
         }
         isTemporarilyHiddenForMotion = false
         motionTrackingDeadline = nil
-        suppressMotionHidingUntil = Date().addingTimeInterval(motionHidingSuppressionDuration)
+        suppressMotionHidingUntil = environment.now.addingTimeInterval(motionHidingSuppressionDuration)
 
         if let pendingMotionSnapshot {
             self.pendingMotionSnapshot = nil
@@ -902,7 +1111,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             refreshFrameNow()
         }
 
-        updateTimerIfNeeded(finderIsFrontmost: isFinderFrontmost())
+        updateTimerIfNeeded(finderIsFrontmost: environment.isFinderFrontmost)
     }
 
     private func cancelMotionHiding() {
@@ -914,7 +1123,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func shouldHideForPolledMotionChange(source: FinderMotionChangeSource) -> Bool {
-        let now = Date()
+        let now = environment.now
         let shouldHide = FinderMotionHidingPolicy.shouldHide(
             source: source,
             suppressionDeadline: suppressMotionHidingUntil,
@@ -927,7 +1136,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func isQuickLookPreviewVisible() -> Bool {
-        guard AccessibilityPermissionManager.isTrusted, let observedAppElement else { return false }
+        guard let observedAppElement, AccessibilityPermissionManager.isTrusted else { return false }
 
         var windowsValue: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(
@@ -955,9 +1164,9 @@ final class FinderWindowTracker: @unchecked Sendable {
             return
         }
 
-        let cgInfo = frontmostWindowInfo(for: finderPID)
+        let cgInfo = environment.frontmostFinderWindow()
         let axInfo = focusedWindowDiagnostics(for: finderPID)
-        let state = stateRefreshCache.state
+        let state = stateRefreshCache.lastKnownState
         let signature = [
             cgInfo?.signature ?? "cg:nil",
             axInfo?.signature ?? "ax:nil",
@@ -1062,7 +1271,8 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 }
 
-private struct FinderCGWindowInfo {
+/// The Core Graphics description of the frontmost Finder window.
+struct FinderCGWindowInfo {
     var number: Int?
     var title: String?
     var layer: Int

@@ -163,7 +163,9 @@ final class AppCoordinator {
         logHotKeyEditing("request \(requestID) started")
         let timeout = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.hotKeyEditRequestGate.cancel(requestID: requestID)
+            // A newer press owns the pending tracker request; leave it alone.
+            guard self.hotKeyEditRequestGate.cancel(requestID: requestID) else { return }
+            self.tracker.cancelFreshSnapshotRequest()
             self.logHotKeyEditing("request \(requestID) timed out")
         }
         DispatchQueue.main.asyncAfter(
@@ -217,6 +219,7 @@ final class AppCoordinator {
 
         if !isFinderFrontmost {
             hotKeyEditRequestGate.cancel()
+            tracker.cancelFreshSnapshotRequest()
         }
 
         if isFinderFrontmost {
@@ -238,37 +241,26 @@ final class AppCoordinator {
     private func handleDeactivatedApplicationChange(bundleIdentifier: String?) {
         guard bundleIdentifier == finderBundleIdentifier else { return }
         hotKeyEditRequestGate.cancel()
+        tracker.cancelFreshSnapshotRequest()
         hotKeyManager.deactivate()
     }
 
     private func applySettings(_ draft: AppSettingsDraft) -> String? {
-        do {
-            try LoginItemManager.setEnabled(draft.launchAtLogin)
-        } catch {
-            return "Could not update Enable at login: \(error.localizedDescription)"
-        }
-
-        var updatedConfig = config
-        updatedConfig.launchAtLogin = draft.launchAtLogin
-        updatedConfig.shortcut = draft.shortcut
-        updatedConfig.displayMode = draft.displayMode
-
-        let finderIsFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finderBundleIdentifier
-        if finderIsFrontmost {
-            let registrationStatus = hotKeyManager.register(shortcut: updatedConfig.shortcut)
-            guard registrationStatus == noErr else {
-                registerHotKey(config.shortcut)
-                return "Could not register keyboard shortcut: OSStatus \(registrationStatus)"
-            }
-        }
-
-        do {
-            try AppConfigLoader.save(updatedConfig)
-        } catch {
-            if finderIsFrontmost {
-                registerHotKey(config.shortcut)
-            }
-            return "Could not save settings: \(error.localizedDescription)"
+        let finderBundleIdentifier = finderBundleIdentifier
+        let transaction = SettingsSaveTransaction(
+            hotKeyManager: hotKeyManager,
+            isFinderFrontmost: {
+                NSWorkspace.shared.frontmostApplication?.bundleIdentifier == finderBundleIdentifier
+            },
+            setLaunchAtLogin: { try LoginItemManager.setEnabled($0) },
+            saveConfig: { try AppConfigLoader.save($0) }
+        )
+        let updatedConfig: AppConfig
+        switch transaction.apply(draft, to: config, launchAtLoginWasEnabled: LoginItemManager.isEnabled) {
+        case .saved(let savedConfig):
+            updatedConfig = savedConfig
+        case .rejected(let message):
+            return message
         }
 
         config = updatedConfig
@@ -292,13 +284,6 @@ final class AppCoordinator {
         )
         if status != noErr {
             NSLog("FinderBreadcrumbs failed to register hotkey %@: OSStatus %d", config.shortcut.description, status)
-        }
-    }
-
-    private func registerHotKey(_ shortcut: AppConfig.Shortcut) {
-        let status = hotKeyManager.register(shortcut: shortcut)
-        if status != noErr {
-            NSLog("FinderBreadcrumbs failed to register hotkey %@: OSStatus %d", shortcut.description, status)
         }
     }
 }

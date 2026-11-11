@@ -34,9 +34,14 @@ final class PathBarViewModel: ObservableObject {
         self.displayMode = displayMode
 
         guard let state else {
-            status = .unavailable("Unsupported Finder location")
-            if currentState == nil && !isEditing {
-                displayedText = "Unsupported Finder location"
+            // The tracker absorbs short read failures before sending nil.
+            // An expired path must no longer be displayed or used for editing.
+            currentState = nil
+            status = .unavailable("Finder location unavailable")
+            displayedText = "Finder location unavailable"
+            editingText = ""
+            if isEditing {
+                endEditingSession(returnFocusToFinder: false, resetEditingTextFromCurrentState: false)
             }
             return
         }

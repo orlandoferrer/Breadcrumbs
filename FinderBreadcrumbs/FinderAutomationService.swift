@@ -134,15 +134,11 @@ final class FinderAutomationService: FinderAutomationServing, @unchecked Sendabl
         if let windowID {
             script = """
             tell application "Finder"
-                activate
-                if exists (first Finder window whose id is \(windowID)) then
-                    set target of (first Finder window whose id is \(windowID)) to (POSIX file "\(escaped)" as alias)
-                else
-                    if not (exists Finder window 1) then
-                        make new Finder window
-                    end if
-                    set target of Finder window 1 to (POSIX file "\(escaped)" as alias)
+                if not (exists (first Finder window whose id is \(windowID))) then
+                    error "The Finder window being edited is no longer available." number -1728
                 end if
+                set target of (first Finder window whose id is \(windowID)) to (POSIX file "\(escaped)" as alias)
+                activate
             end tell
             """
         } else {

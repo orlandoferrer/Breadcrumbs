@@ -8,6 +8,10 @@ FinderBreadcrumbs is a native macOS prototype that adds a small companion path b
 - Shows the current path in `text` mode by default, with a config option for `breadcrumb`.
 - Clicks into edit mode or focuses edit mode with `Command+L` while Finder is frontmost. The configurable global shortcut is registered only while Finder is active, so it does not block matching shortcuts in other apps.
 - Navigates the current Finder window to the typed path when you press `Return`.
+- Never redirects an edit to another Finder window if its original window closes.
+- Shows `Finder location unavailable` and disables editing when Finder fails to report a path or a read stays stuck; a valid Finder read restores the path automatically.
+- Keeps the bar hidden after you return to Finder or switch Finder windows until a fresh read finishes, so inactivity alone never shows the unavailable placeholder or an outdated path.
+- Opens the editor from the shortcut only with a Finder read that started after the key press.
 - Resolves symlinks before navigation.
 - Attempts unambiguous filesystem autocomplete when you press `Tab`.
 - Hides the overlay while the Finder window is being moved or resized, then restores it after the window settles.
@@ -69,9 +73,25 @@ The shortcut can be configured with a readable string:
 ```
 
 Supported modifiers are `cmd`, `option`, `shift`, and `control`. Common keys
-include letters, numbers, `space`, `tab`, `return`, `escape`, `delete`, and
-arrow keys like `left` or `right`. The older numeric `{ "keyCode": ..., "modifiers": ... }`
+include letters, numbers, `space`, `tab`, `return`, `escape`, `delete`, `f1`
+through `f20`, and arrow keys like `left` or `right`. The older numeric `{ "keyCode": ..., "modifiers": ... }`
 format still works for existing configs.
+
+Shortcuts must include `cmd` or `control`, because combinations such as
+`shift+a` or `option+l` would steal typed text from Finder search and rename
+fields. Function keys are the one exception: they never type text, so
+`option` alone is enough (for example `option+f5`). Settings and config loading
+share this rule. An invalid or unreadable shortcut in `config.json` falls back
+to `cmd+l` without discarding your other settings.
+
+When you click Save, Settings briefly registers the new shortcut to confirm
+that macOS accepts it, then releases it unless Finder is frontmost. A rejected
+or conflicting shortcut is reported in the Settings window, the previous
+shortcut keeps working, and Enable at login is left unchanged.
+
+In the shortcut field, click (or press Space) to start recording. While
+recording, `Escape` cancels without changing the shortcut, `Tab` and
+`Shift+Tab` move focus, and `Return` activates the default Save button.
 
 Polling intervals from the config must be positive, finite numbers. Invalid
 values fall back to safe defaults rather than creating a continuously firing
@@ -108,7 +128,13 @@ Run the typecheck and lightweight regression suite with:
 The suite covers editing focus and window targeting, fresh-snapshot hotkey
 coalescing, readable shortcut config, hotkey registration lifecycle, Finder
 polling/reentrancy, resize hiding, config sanitization, and Quick Look
-classification. It also covers drag-to-install volume classification so
+classification, path expiry/recovery, focused AppKit shortcut recording, and
+missing-window navigation failures. Tracker tests drive the real
+`FinderWindowTracker` against a scripted Finder and clock to cover activation
+after inactivity, slow versus failed or stuck reads, window switches, and
+shortcut presses that must ignore reads started before the press. Settings
+tests cover recorder keys, shortcut validation, and registration conflicts.
+It also covers drag-to-install volume classification so
 writable external and network volumes are not mistaken for installer DMGs. The
 suite uses mocks and does not require Finder permissions.
 
@@ -134,15 +160,16 @@ bugs in every macOS configuration.
 - [ ] Clamp polling intervals to sensible minimum values; currently any finite
   positive value is accepted, including values small enough to cause excessive
   CPU use.
-- [ ] Make Settings saves transactional, or roll back Enable at login and hotkey
-  changes when hotkey registration or config persistence fails.
+- [x] Check shortcut registration before reporting Settings saved. Failures
+  attempt to restore the previous config, login setting, and hotkey; any failed
+  restoration is reported explicitly rather than claiming nothing changed.
 
 ### Behavior to define
 
 - [ ] Decide whether relative paths should resolve from the active Finder folder,
   the filesystem root, or be rejected as invalid input.
-- [ ] Decide whether manually configured shortcuts must include a modifier, as
-  the Settings UI requires, or whether plain-key global shortcuts are supported.
+- [x] Decide whether manually configured shortcuts must include a modifier:
+  they need Command or Control, or Option with a function key.
 - [ ] Confirm whether Quick Look in another Finder window or macOS Space should
   hide the bar attached to the currently visible Finder window.
 

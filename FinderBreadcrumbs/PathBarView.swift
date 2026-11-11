@@ -106,7 +106,8 @@ private struct ReadOnlyPathContent: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            if case let .unavailable(message) = viewModel.status {
+            if case let .unavailable(message) = viewModel.status,
+               message != viewModel.displayedText {
                 Text(message)
                     .font(.system(size: 10))
                     .foregroundStyle(Color(nsColor: .secondaryLabelColor))

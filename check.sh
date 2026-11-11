@@ -23,6 +23,7 @@ swiftc \
   FinderBreadcrumbs/HotKeyManager.swift \
   FinderBreadcrumbs/PathBarView.swift \
   FinderBreadcrumbs/PathBarViewModel.swift \
+  FinderBreadcrumbs/SettingsWindowController.swift \
   Tests/EditingFocusRegressionTests.swift \
   -o "$REGRESSION_BINARY"
 
