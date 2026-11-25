@@ -177,7 +177,7 @@ enum PathEditorActivation {
 
 /// Bridges SwiftUI bindings to `NSTextField`, whose AppKit field-editor behavior
 /// provides more reliable one-click editing than SwiftUI's `TextField` here.
-private struct PathEditorField: NSViewRepresentable {
+struct PathEditorField: NSViewRepresentable {
     @Binding var text: String
     let focusRequestID: Int
     let onCommit: () -> Void
@@ -262,12 +262,9 @@ private struct PathEditorField: NSViewRepresentable {
             }
         }
 
-        func controlTextDidBeginEditing(_ obj: Notification) {
-            guard let field = obj.object as? NSTextField,
-                  let editor = field.currentEditor() as? NSTextView else { return }
-            PathEditorActivation.placeCaretAtEnd(in: editor, for: field)
-        }
-
+        // Initial caret placement belongs only to scheduleInitialFocus. AppKit
+        // sends didBeginEditing on the first mutation, after a user may already
+        // have selected a middle segment; resetting there splits typed text.
         func controlTextDidChange(_ obj: Notification) {
             guard let field = obj.object as? NSTextField else { return }
             text = field.stringValue

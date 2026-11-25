@@ -291,15 +291,17 @@ struct AppConfig: Codable {
     init(from decoder: Decoder) throws {
         let defaults = AppConfig.default
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        displayMode = try container.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? defaults.displayMode
-        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
-        activePollInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .activePollInterval) ?? defaults.activePollInterval
-        motionPollInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .motionPollInterval) ?? defaults.motionPollInterval
-        motionTrackingDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .motionTrackingDuration) ?? defaults.motionTrackingDuration
-        inactivePollInterval = try container.decodeIfPresent(TimeInterval.self, forKey: .inactivePollInterval) ?? defaults.inactivePollInterval
-        horizontalInset = try container.decodeIfPresent(CGFloat.self, forKey: .horizontalInset) ?? defaults.horizontalInset
-        verticalGap = try container.decodeIfPresent(CGFloat.self, forKey: .verticalGap) ?? defaults.verticalGap
-        preferredBarHeight = try container.decodeIfPresent(CGFloat.self, forKey: .preferredBarHeight) ?? defaults.preferredBarHeight
+        // A malformed field must not erase unrelated valid preferences when
+        // Settings next saves this configuration back to disk.
+        displayMode = (try? container.decode(DisplayMode.self, forKey: .displayMode)) ?? defaults.displayMode
+        launchAtLogin = (try? container.decode(Bool.self, forKey: .launchAtLogin)) ?? defaults.launchAtLogin
+        activePollInterval = (try? container.decode(TimeInterval.self, forKey: .activePollInterval)) ?? defaults.activePollInterval
+        motionPollInterval = (try? container.decode(TimeInterval.self, forKey: .motionPollInterval)) ?? defaults.motionPollInterval
+        motionTrackingDuration = (try? container.decode(TimeInterval.self, forKey: .motionTrackingDuration)) ?? defaults.motionTrackingDuration
+        inactivePollInterval = (try? container.decode(TimeInterval.self, forKey: .inactivePollInterval)) ?? defaults.inactivePollInterval
+        horizontalInset = (try? container.decode(CGFloat.self, forKey: .horizontalInset)) ?? defaults.horizontalInset
+        verticalGap = (try? container.decode(CGFloat.self, forKey: .verticalGap)) ?? defaults.verticalGap
+        preferredBarHeight = (try? container.decode(CGFloat.self, forKey: .preferredBarHeight)) ?? defaults.preferredBarHeight
         do {
             shortcut = try container.decodeIfPresent(Shortcut.self, forKey: .shortcut) ?? defaults.shortcut
         } catch {
@@ -308,7 +310,7 @@ struct AppConfig: Codable {
             NSLog("FinderBreadcrumbs ignored an unreadable shortcut in config: %@", String(describing: error))
             shortcut = defaults.shortcut
         }
-        debugLogFinderWindowDiagnostics = try container.decodeIfPresent(Bool.self, forKey: .debugLogFinderWindowDiagnostics) ?? defaults.debugLogFinderWindowDiagnostics
+        debugLogFinderWindowDiagnostics = (try? container.decode(Bool.self, forKey: .debugLogFinderWindowDiagnostics)) ?? defaults.debugLogFinderWindowDiagnostics
     }
 
     private enum CodingKeys: String, CodingKey {

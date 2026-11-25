@@ -8,6 +8,14 @@ import Foundation
 struct FinderWindowSnapshot: Equatable {
     var frame: CGRect
     var state: FinderState?
+    /// Geometry stays paired with its window even when the path is unavailable.
+    var windowNumber: Int?
+
+    init(frame: CGRect, state: FinderState?, windowNumber: Int? = nil) {
+        self.frame = frame
+        self.state = state
+        self.windowNumber = windowNumber ?? state?.windowID
+    }
 }
 
 /// Events emitted by `FinderWindowTracker` to `AppCoordinator`.
@@ -318,13 +326,25 @@ protocol FinderTrackingEnvironment: AnyObject {
 
 final class SystemFinderTrackingEnvironment: FinderTrackingEnvironment, @unchecked Sendable {
     private let automationService: FinderAutomationServing
+    private let classifyInstaller: (@Sendable (String) -> Bool)?
+    private let uptime: @Sendable () -> TimeInterval
+    // These two fields are confined to stateRefreshQueue, including the
+    // detector's immutable-volume layout cache.
+    private let installerDetector = DragToInstallVolumeDetector()
+    private var lastClassification: (path: String, isInstaller: Bool, checkedAt: TimeInterval)?
     private let stateRefreshQueue = DispatchQueue(
         label: "com.orlando.FinderBreadcrumbs.finder-state-refresh",
         qos: .utility
     )
 
-    init(automationService: FinderAutomationServing) {
+    init(
+        automationService: FinderAutomationServing,
+        classifyInstaller: (@Sendable (String) -> Bool)? = nil,
+        uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
         self.automationService = automationService
+        self.classifyInstaller = classifyInstaller
+        self.uptime = uptime
     }
 
     var now: Date {
@@ -376,12 +396,25 @@ final class SystemFinderTrackingEnvironment: FinderTrackingEnvironment, @uncheck
 
     func readFinderState(_ completion: @escaping @Sendable (FinderState?) -> Void) {
         let automationService = automationService
-        // Only AppleScript execution happens off-main. All cache and lifecycle
-        // state returns to the main queue before mutation.
-        stateRefreshQueue.async {
-            let state = automationService.currentState()
+        // NAS metadata can block just like Apple Events. Carry classification
+        // with this read so frame polling and hotkey completion do no disk I/O.
+        stateRefreshQueue.async { [self] in
+            var state = automationService.currentState()
+            if let path = state?.resolvedPath {
+                let now = uptime()
+                if let cached = lastClassification,
+                   cached.path == path, now - cached.checkedAt < 5 {
+                    state?.isDragToInstallVolume = cached.isInstaller
+                } else {
+                    let isInstaller = classifyInstaller?(path) ?? installerDetector.shouldHideBar(forPath: path)
+                    // Start the TTL after a potentially slow NAS lookup finishes.
+                    lastClassification = (path, isInstaller, uptime())
+                    state?.isDragToInstallVolume = isInstaller
+                }
+            }
+            let result = state
             DispatchQueue.main.async {
-                completion(state)
+                completion(result)
             }
         }
     }
@@ -404,7 +437,7 @@ final class FinderWindowTracker: @unchecked Sendable {
 
     private let config: AppConfig
     private let environment: FinderTrackingEnvironment
-    private let dragToInstallVolumeDetector = DragToInstallVolumeDetector()
+    private let quickLookIsVisible: (() -> Bool)?
     private var timer: Timer?
     private var isRunning = false
     private var lastSnapshot: FinderWindowSnapshot?
@@ -424,10 +457,9 @@ final class FinderWindowTracker: @unchecked Sendable {
     private var isResizeDragInProgress = false
     private var pendingBurstRefreshes: [DispatchWorkItem] = []
     private var motionSettleRefresh: DispatchWorkItem?
-    private var pendingMotionSnapshot: FinderWindowSnapshot?
     private var isTemporarilyHiddenForMotion = false
     private var isOverlayHidden = true
-    private var didPromptForAccessibilityThisRun = false
+    private var hasVisiblePath = false
     private var suppressMotionHidingUntil: Date?
     private var lastDiagnosticSignature: String?
     private var missingSnapshotGraceUntil: Date?
@@ -449,9 +481,14 @@ final class FinderWindowTracker: @unchecked Sendable {
         )
     }
 
-    init(config: AppConfig, environment: FinderTrackingEnvironment) {
+    init(
+        config: AppConfig,
+        environment: FinderTrackingEnvironment,
+        quickLookIsVisible: (() -> Bool)? = nil
+    ) {
         self.config = config
         self.environment = environment
+        self.quickLookIsVisible = quickLookIsVisible
     }
 
     func start() {
@@ -563,6 +600,7 @@ final class FinderWindowTracker: @unchecked Sendable {
         }
 
         guard !isQuickLookPreviewVisible() else {
+            cancelFreshSnapshotRequest()
             cancelMotionHiding()
             emitQuickLookHidden()
             return
@@ -588,7 +626,6 @@ final class FinderWindowTracker: @unchecked Sendable {
                 return
             }
             if isTemporarilyHiddenForMotion, !lastCaptureWasKnownChildWindow {
-                pendingMotionSnapshot = pendingMotionSnapshot ?? lastSnapshot
                 scheduleMotionSettleRefreshIfNeeded()
                 return
             }
@@ -610,21 +647,20 @@ final class FinderWindowTracker: @unchecked Sendable {
                 let changeSource: FinderMotionChangeSource =
                     snapshot.frame.size == lastSnapshot.frame.size ? .polledMove : .polledResize
                 if shouldHideForPolledMotionChange(source: changeSource) {
-                    beginMotionHiding(with: snapshot)
+                    beginMotionHiding()
                     self.lastSnapshot = snapshot
                     updateTimerIfNeeded(finderIsFrontmost: finderIsFrontmost)
                     return
                 }
             }
             lastSnapshot = snapshot
-            if isTemporarilyHiddenForMotion {
-                pendingMotionSnapshot = snapshot
-            } else {
+            if !isTemporarilyHiddenForMotion {
                 emitSnapshot(snapshot)
             }
-        } else if isTemporarilyHiddenForMotion {
-            pendingMotionSnapshot = snapshot
-        } else if isOverlayHidden {
+        } else if !isTemporarilyHiddenForMotion,
+                  isOverlayHidden || (snapshot.state != nil && !hasVisiblePath) {
+            // Editing can hold the panel visible while Finder is inactive.
+            // Its identical fresh path still needs to restore grace and stacking.
             emitSnapshot(snapshot)
         }
 
@@ -694,10 +730,12 @@ final class FinderWindowTracker: @unchecked Sendable {
 
     private func emitSnapshot(_ snapshot: FinderWindowSnapshot) {
         isOverlayHidden = false
+        hasVisiblePath = snapshot.state != nil
         onUpdate?(.snapshot(snapshot))
     }
 
     private func emitHidden(preserveLastSnapshot: Bool = false) {
+        hasVisiblePath = false
         if !preserveLastSnapshot {
             lastSnapshot = nil
         }
@@ -714,6 +752,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func emitQuickLookHidden() {
+        hasVisiblePath = false
         isOverlayHidden = true
         onUpdate?(.hiddenForQuickLook)
     }
@@ -732,6 +771,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             // its own path. Neither may rely on a read that started earlier.
             hasCapturedSinceActivation = true
             lastCapturedWindowNumber = windowInfo.number
+            hasVisiblePath = false
             stateRefreshCache.requireFreshRead(at: now)
         }
 
@@ -748,7 +788,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             now: now,
             maximumAge: max(missingSnapshotGraceDuration, config.activePollInterval * 2),
             pendingReadGrace: pendingReadGraceDuration,
-            isShowingPath: (!isOverlayHidden || isTemporarilyHiddenForMotion) && lastSnapshot?.state != nil
+            isShowingPath: hasVisiblePath
         )
 
         let state: FinderState?
@@ -770,8 +810,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             return nil
         }
 
-        if let installerPath = (state ?? stateRefreshCache.lastKnownState)?.resolvedPath,
-           dragToInstallVolumeDetector.shouldHideBar(forPath: installerPath) {
+        if (state ?? stateRefreshCache.lastKnownState)?.isDragToInstallVolume == true {
             // A mounted drag-to-install DMG is technically a Finder browser
             // window, but its path is not useful navigation UI. Keep it hidden
             // even when its cached path expires.
@@ -779,7 +818,10 @@ final class FinderWindowTracker: @unchecked Sendable {
             return nil
         }
 
-        return FinderWindowSnapshot(frame: windowInfo.frame, state: state)
+        return FinderWindowSnapshot(
+            frame: windowInfo.frame, state: state,
+            windowNumber: windowInfo.number ?? stateRefreshCache.lastKnownState?.windowID
+        )
     }
 
     private func requestStateRefresh(forceRefresh: Bool) {
@@ -833,8 +875,8 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func freshSnapshot(matching state: FinderState?) -> FinderWindowSnapshot? {
-        guard environment.isFinderFrontmost, let state else { return nil }
-        guard !dragToInstallVolumeDetector.shouldHideBar(forPath: state.resolvedPath) else {
+        guard environment.isFinderFrontmost, !isQuickLookPreviewVisible(), let state else { return nil }
+        guard !state.isDragToInstallVolume else {
             return nil
         }
         guard let windowInfo = environment.frontmostFinderWindow(),
@@ -845,7 +887,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             return nil
         }
 
-        return FinderWindowSnapshot(frame: windowInfo.frame, state: state)
+        return FinderWindowSnapshot(frame: windowInfo.frame, state: state, windowNumber: windowInfo.number)
     }
 
     private func completeFreshSnapshotRequest(with snapshot: FinderWindowSnapshot?) {
@@ -875,7 +917,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     private func handleGlobalInputEvent(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
-            guard environment.isFinderFrontmost, let lastSnapshot else { return }
+            guard environment.isFinderFrontmost, hasVisiblePath, let lastSnapshot else { return }
             let mousePoint = windowServerPoint(fromAppKitPoint: NSEvent.mouseLocation)
             guard FinderResizeHitTester.isResizeBorderHit(
                 point: mousePoint,
@@ -883,7 +925,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             ) else { return }
 
             isResizeDragInProgress = true
-            beginMotionHiding(with: lastSnapshot)
+            beginMotionHiding()
         case .leftMouseUp:
             guard isResizeDragInProgress else { return }
             isResizeDragInProgress = false
@@ -901,10 +943,6 @@ final class FinderWindowTracker: @unchecked Sendable {
     private func syncAccessibilityObservation() {
         guard environment.observesSystemEvents else { return }
         guard AccessibilityPermissionManager.isTrusted else {
-            if !didPromptForAccessibilityThisRun {
-                didPromptForAccessibilityThisRun = true
-                AccessibilityPermissionManager.ensurePrompted()
-            }
             teardownAccessibilityObservation()
             return
         }
@@ -1018,7 +1056,7 @@ final class FinderWindowTracker: @unchecked Sendable {
         self.observedWindowElement = nil
     }
 
-    fileprivate func handleAccessibilityNotification(_ notification: String) {
+    func handleAccessibilityNotification(_ notification: String) {
         switch notification {
         case kAXFocusedWindowChangedNotification,
              kAXMainWindowChangedNotification:
@@ -1062,11 +1100,10 @@ final class FinderWindowTracker: @unchecked Sendable {
         pendingBurstRefreshes.removeAll()
     }
 
-    private func beginMotionHiding(with snapshot: FinderWindowSnapshot? = nil) {
-        if let snapshot {
-            pendingMotionSnapshot = snapshot
-        }
-
+    private func beginMotionHiding() {
+        // Arm settling even if activation is still awaiting a path, so a fresh
+        // read arriving mid-drag cannot reveal the bar early. This never grants
+        // hasVisiblePath: only a path actually shown may get read-latency grace.
         if !isTemporarilyHiddenForMotion {
             isTemporarilyHiddenForMotion = true
             emitTemporarilyHiddenForMotion()
@@ -1091,7 +1128,8 @@ final class FinderWindowTracker: @unchecked Sendable {
         scheduleMotionSettleRefresh()
     }
 
-    private func finishMotionHiding() {
+    func finishMotionHiding() {
+        motionSettleRefresh?.cancel()
         motionSettleRefresh = nil
         guard isTemporarilyHiddenForMotion else { return }
         guard FinderMotionCompletionPolicy.shouldFinish(
@@ -1104,12 +1142,9 @@ final class FinderWindowTracker: @unchecked Sendable {
         motionTrackingDeadline = nil
         suppressMotionHidingUntil = environment.now.addingTimeInterval(motionHidingSuppressionDuration)
 
-        if let pendingMotionSnapshot {
-            self.pendingMotionSnapshot = nil
-            emitSnapshot(pendingMotionSnapshot)
-        } else {
-            refreshFrameNow()
-        }
+        // Recheck focus, Quick Look, window pairing and path age at settle time;
+        // replaying a captured snapshot could resurrect stale or suppressed UI.
+        refreshFrameNow()
 
         updateTimerIfNeeded(finderIsFrontmost: environment.isFinderFrontmost)
     }
@@ -1117,7 +1152,6 @@ final class FinderWindowTracker: @unchecked Sendable {
     private func cancelMotionHiding() {
         motionSettleRefresh?.cancel()
         motionSettleRefresh = nil
-        pendingMotionSnapshot = nil
         isTemporarilyHiddenForMotion = false
         suppressMotionHidingUntil = nil
     }
@@ -1136,6 +1170,7 @@ final class FinderWindowTracker: @unchecked Sendable {
     }
 
     private func isQuickLookPreviewVisible() -> Bool {
+        if let quickLookIsVisible { return quickLookIsVisible() }
         guard let observedAppElement, AccessibilityPermissionManager.isTrusted else { return false }
 
         var windowsValue: CFTypeRef?
@@ -1150,7 +1185,7 @@ final class FinderWindowTracker: @unchecked Sendable {
             QuickLookAXWindowDetector.isPreviewWindow(
                 role: stringAttribute(kAXRoleAttribute, from: window),
                 subrole: stringAttribute(kAXSubroleAttribute, from: window),
-                title: stringAttribute(kAXTitleAttribute, from: window)
+                title: nil
             )
         }
     }

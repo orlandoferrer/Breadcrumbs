@@ -116,7 +116,10 @@ controller converts the Core Graphics rectangle before positioning the panel.
 
 `FinderAutomationService.currentState()` asks Finder for the active window ID and
 target folder using Apple Events. This work can block, so tracking requests run
-on the serial `stateRefreshQueue`, not on the main thread.
+on the serial `stateRefreshQueue`. Installer-volume metadata is read on that
+queue too and travels with the resulting state. The last path's classification
+is reused for five seconds after classification completes, measured with a
+monotonic clock; geometry polls never read the filesystem.
 
 The resulting `FinderState` pairs a directory with a Finder window ID. The ID is
 important: it prevents a frame from one Finder window being combined with a path
@@ -176,9 +179,10 @@ The overlay intentionally disappears during a move or resize. Accessibility
 notifications catch motion when permission is available. A global mouse monitor
 also detects Finder border and corner drags, improving resize behavior.
 
-`pendingMotionSnapshot` remembers the newest geometry while hidden. After mouse
-release and a short settle delay, the tracker emits that snapshot and the bar
-returns at the final position.
+After mouse release and a short settle delay, the tracker captures the current
+geometry and rechecks focus, Quick Look, path freshness, and installer policy.
+Only motion that hid an already visible path can retain its short read grace.
+An old snapshot cannot reappear while a fresh activation read is still pending.
 
 ## 5. Drawing the Companion Window
 
@@ -189,7 +193,9 @@ normal document window.
 Important panel choices include:
 
 - `.borderless` removes standard window chrome.
-- `.statusBar` keeps the bar above Finder while it is meant to be visible.
+- `.normal`, nonfloating stacking orders the bar immediately above its Finder
+  window, allowing other apps' windows to overlap it even during a live drag.
+- An inherited appearance follows light/dark changes without recreating the panel.
 - `.moveToActiveSpace` follows the active macOS Space.
 - `canBecomeKey == true` allows the text editor to receive keyboard input.
 - `canBecomeMain == false` prevents the companion from behaving like the app's

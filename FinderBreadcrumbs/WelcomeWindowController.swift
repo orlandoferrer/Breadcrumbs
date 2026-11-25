@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -109,8 +110,14 @@ private struct WelcomeView: View {
                 detail: "Tracks the active Finder window so the path bar stays attached while it moves.",
                 state: accessibilityState,
                 deniedAppearance: .limited,
-                actionTitle: accessibilityState == .granted ? nil : "Open System Settings",
-                action: { openPrivacyPane("Privacy_Accessibility") }
+                actionTitle: accessibilityState == .granted ? nil : "Allow Accessibility...",
+                action: {
+                    // Request trust only after an explicit click. This also
+                    // registers a first installation in macOS's permission UI;
+                    // Limited mode, startup and Continue never trigger a prompt.
+                    AccessibilityPermissionManager.ensurePrompted()
+                    openPrivacyPane("Privacy_Accessibility")
+                }
             )
 
             HStack {

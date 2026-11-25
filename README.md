@@ -37,11 +37,15 @@ Breadcrumbs needs two macOS permissions for the full experience:
 - **Finder automation** lets the app read the folder shown in Finder and navigate Finder windows to typed paths.
 - **Accessibility** lets the app track Finder's active window and follow move/resize changes more smoothly. It also lets the app detect Finder Quick Look so the bar can hide during previews.
 
-The app shows a **Welcome & Permissions** window on first launch, and again on launch if permissions are still missing. The same window can be reopened from the menu-bar item.
+The app shows a **Welcome & Permissions** window on first launch. Continue remembers
+your choice, including Limited mode, without requesting Accessibility on later
+launches. The same window can be reopened from the menu-bar item.
 
 Finder automation is required for path reading and navigation. Without Accessibility, the app runs in **Limited** mode using CoreGraphics and polling: basic tracking still works, but motion updates are less immediate and Quick Look cannot be detected reliably.
 
-The Finder automation request is triggered from the welcome window's **Request Permission** button. Accessibility is granted through System Settings, opened from the welcome window.
+The Finder automation request is triggered from the welcome window's **Request Permission** button.
+**Allow Accessibility...** requests trust and opens System Settings so you can
+enable Breadcrumbs there. Startup, Check Again, and Continue do not request Accessibility.
 
 ## Important limitation
 
@@ -134,6 +138,10 @@ missing-window navigation failures. Tracker tests drive the real
 after inactivity, slow versus failed or stuck reads, window switches, and
 shortcut presses that must ignore reads started before the press. Settings
 tests cover recorder keys, shortcut validation, and registration conflicts.
+Interaction regressions also cover activation during motion settling, Quick Look
+opening during a shortcut request, initial caret placement followed by selected
+text replacement, normal overlay window levels, Settings error sizing, pending
+login registrations, and background installer classification.
 It also covers drag-to-install volume classification so
 writable external and network volumes are not mistaken for installer DMGs. The
 suite uses mocks and does not require Finder permissions.

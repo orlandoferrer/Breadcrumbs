@@ -153,6 +153,26 @@ final class SettingsWindowController {
         onSave: @escaping (AppSettingsDraft) -> String?,
         onCancel: @escaping () -> Void
     ) {
+        let window = prepareWindow(draft: draft, onSave: onSave, onCancel: onCancel)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Constructs the form independently of activation, allowing AppKit layout
+    /// regressions to be exercised without changing the user's frontmost app.
+    func prepareWindow(
+        draft: AppSettingsDraft,
+        onSave: @escaping (AppSettingsDraft) -> String?,
+        onCancel: @escaping () -> Void
+    ) -> NSWindow {
+        let isNewWindow = window == nil
+        let window = window ?? NSWindow(
+            contentRect: .zero, styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        self.window = window
+        window.title = "FinderBreadcrumbs Settings"
+        window.isReleasedWhenClosed = false
         let view = SettingsView(
             initialDraft: draft,
             onSave: { [weak self] draft in
@@ -165,46 +185,45 @@ final class SettingsWindowController {
             onCancel: { [weak self] in
                 onCancel()
                 self?.window?.close()
+            },
+            onContentSizeChange: { [weak self] size in
+                guard let window = self?.window else { return }
+                // Error messages grow the form. Preserve its top edge while
+                // expanding so Save/Cancel never slide outside the content.
+                let top = window.frame.maxY
+                window.setContentSize(size)
+                window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
             }
         )
 
-        if let window {
-            window.contentView = NSHostingView(rootView: view)
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "FinderBreadcrumbs Settings"
-            window.center()
-            window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: view)
-            self.window = window
-            window.makeKeyAndOrderFront(nil)
-        }
-
-        NSApp.activate(ignoringOtherApps: true)
+        let hostingView = NSHostingView(rootView: view)
+        window.contentView = hostingView
+        window.setContentSize(hostingView.fittingSize)
+        if isNewWindow { window.center() }
+        return window
     }
 }
 
-private struct SettingsView: View {
+struct SettingsView: View {
     @State private var draft: AppSettingsDraft
     @State private var validationMessage: String?
 
     let onSave: (AppSettingsDraft) -> String?
     let onCancel: () -> Void
+    let onContentSizeChange: (CGSize) -> Void
 
     init(
         initialDraft: AppSettingsDraft,
+        initialValidationMessage: String? = nil,
         onSave: @escaping (AppSettingsDraft) -> String?,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        onContentSizeChange: @escaping (CGSize) -> Void = { _ in }
     ) {
         self._draft = State(initialValue: initialDraft)
+        self._validationMessage = State(initialValue: initialValidationMessage)
         self.onSave = onSave
         self.onCancel = onCancel
+        self.onContentSizeChange = onContentSizeChange
     }
 
     var body: some View {
@@ -239,8 +258,6 @@ private struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Spacer(minLength: 0)
-
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel)
@@ -252,7 +269,14 @@ private struct SettingsView: View {
             }
         }
         .padding(22)
-        .frame(width: 420, height: 260)
+        .frame(width: 420)
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { size in
+            // Changing the hosting window during layout can reenter AppKit.
+            DispatchQueue.main.async { onContentSizeChange(size) }
+        }
     }
 }
 

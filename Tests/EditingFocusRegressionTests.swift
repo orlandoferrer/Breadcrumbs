@@ -1,6 +1,8 @@
 import AppKit
 import Carbon
 import Foundation
+import ServiceManagement
+import SwiftUI
 
 @main
 /// Lightweight regression runner used by `check.sh`.
@@ -10,6 +12,18 @@ import Foundation
 struct EditingFocusRegressionTests {
     static func main() async {
         await MainActor.run {
+            _ = NSApplication.shared
+            testPathEditorPreservesSelectionThroughFirstKeystrokes()
+            testOverlayUsesNormalWindowStackingAndInheritedAppearance()
+            testSettingsErrorContentFitsItsNaturalSize()
+            testSettingsWindowResizesAfterSaveError()
+            testPendingLoginRegistrationCanBeDisabled()
+            testTrackerMotionAfterActivationWaitsForFreshPath()
+            testTrackerHeldOverlayRestoresFreshnessAfterEditing()
+            testTrackerUnavailableSnapshotKeepsItsWindowNumber()
+            testTrackerMotionSettleRechecksFocusAndExpiration()
+            testTrackerQuickLookCancelsHotKeyAndRecovers()
+            testTrackerInstallerClassificationSuppressesPollAndHotKey()
             testOutsideClickCancelDoesNotReturnFocusToFinder()
             testCommitStillReturnsFocusToFinder()
             testEditingInitialCursorPlacementDefaultsToEnd()
@@ -48,6 +62,8 @@ struct EditingFocusRegressionTests {
             testTrackerCoalescesHotKeyPressesAndForcedRefreshes()
             testTrackerHotKeyRequestCancellationRejectsLateReads()
         }
+        await testInstallerClassificationRunsOffMainAndIsCached()
+        await testSlowInstallerClassificationCachesFromCompletion()
         testReadableShortcutDecoding()
         testLegacyShortcutDecoding()
         testReadableShortcutEncoding()
@@ -58,6 +74,7 @@ struct EditingFocusRegressionTests {
         testConfigTextInputShortcutFallsBackAlone()
         testConfigUnreadableShortcutFallsBackAlone()
         testConfigPreservesValidShortcuts()
+        testMalformedConfigFieldPreservesOtherPreferences()
         testFinderStateAcceptsFileURLFallback()
         testFinderStateRecoversClassCodedAFPPath()
         testFinderStateScriptProtectsDescriptionCoercion()
@@ -86,6 +103,324 @@ struct EditingFocusRegressionTests {
         testRepeatedFinderActivationIsIdempotent()
         testFinderDeactivationReleasesOnlyHotKey()
         testReturningToFinderReusesInstalledHandler()
+    }
+
+    @MainActor
+    private static func testPathEditorPreservesSelectionThroughFirstKeystrokes() {
+        let window = NSWindow(
+            contentRect: NSRect(x: -10000, y: -10000, width: 420, height: 40),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.orderOut(nil) }
+        let field = KeyAwareTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 30))
+        field.isEditable = true
+        field.stringValue = "/abcdef"
+        let delegate = PathEditorField.Coordinator(text: .constant(field.stringValue))
+        field.delegate = delegate
+        window.contentView?.addSubview(field)
+        expect(PathEditorActivation.activateEditing(in: field, window: window), "One focus request must attach the field editor.")
+        guard let editor = field.currentEditor() as? NSTextView else {
+            expect(false, "The editing caret must exist immediately.")
+            return
+        }
+        expect(editor.selectedRange == NSRange(location: 7, length: 0), "Initial focus must place the caret at the end.")
+        editor.selectedRange = NSRange(location: 2, length: 2)
+        editor.insertText("x", replacementRange: editor.selectedRange)
+        editor.insertText("x", replacementRange: editor.selectedRange)
+        expect(editor.string == "/axxdef", "The first edit callback must not send the second keystroke to the end.")
+        withExtendedLifetime(delegate) {}
+    }
+
+    @MainActor
+    private static func testOverlayUsesNormalWindowStackingAndInheritedAppearance() {
+        let controller = OverlayWindowController(viewModel: makeReadyViewModel())
+        let panel = controller.panel
+        expect(panel.level == .normal && !panel.isFloatingPanel, "Other apps' dragged windows must share ordinary stacking with the bar.")
+        expect(panel.appearance == nil, "The bar must inherit future system appearance changes.")
+        let finderWindow = NSWindow(
+            contentRect: NSRect(x: -10000, y: -10000, width: 800, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        finderWindow.isReleasedWhenClosed = false
+        finderWindow.orderFront(nil)
+        var state = tmp42
+        state.windowID = finderWindow.windowNumber
+        controller.update(with: FinderWindowSnapshot(frame: CGRect(x: -10000, y: -10000, width: 800, height: 600), state: state), config: .default)
+        expect(panel.isVisible, "Normal stacking must still show the bar on its tracked window.")
+        expect(panel.level == .normal, "Showing the bar must not promote it to a floating level.")
+        controller.hide()
+        controller.update(with: FinderWindowSnapshot(
+            frame: CGRect(x: -10000, y: -10000, width: 800, height: 600),
+            state: nil, windowNumber: finderWindow.windowNumber
+        ), config: .default)
+        expect(panel.isVisible, "Unavailable paths must still order against their paired Finder window.")
+        let newController = OverlayWindowController(viewModel: makeReadyViewModel())
+        newController.update(with: FinderWindowSnapshot(
+            frame: CGRect(x: -10000, y: -10000, width: 800, height: 600),
+            state: nil, windowNumber: finderWindow.windowNumber
+        ), config: .default)
+        expect(newController.isVisible, "The first unavailable snapshot must not require an earlier path to become visible.")
+        newController.hide()
+        controller.hide()
+        finderWindow.orderOut(nil)
+    }
+
+    @MainActor
+    private static func testSettingsErrorContentFitsItsNaturalSize() {
+        let draft = AppSettingsDraft(launchAtLogin: false, shortcut: .default, displayMode: .text)
+        let messages: [String?] = [nil,
+            "Could not register keyboard shortcut cmd+l. Another app may already use it (OSStatus -9878).",
+            String(repeating: "Could not restore the previous configuration. Check Login Items in System Settings. ", count: 3)]
+        var previousHeight: CGFloat = 0
+        for message in messages {
+            let hosting = NSHostingView(rootView: SettingsView(
+                initialDraft: draft, initialValidationMessage: message,
+                onSave: { _ in nil }, onCancel: {}
+            ))
+            let size = hosting.fittingSize
+            hosting.frame.size = size
+            hosting.layoutSubtreeIfNeeded()
+            expect(size.width == 420 && size.height > previousHeight, "Settings must grow vertically as error messages grow.")
+            expect(size.height > 260, "Settings must use the form's natural height, including all controls.")
+            previousHeight = size.height
+        }
+    }
+
+    @MainActor
+    private static func testSettingsWindowResizesAfterSaveError() {
+        let controller = SettingsWindowController()
+        var saveCount = 0
+        let window = controller.prepareWindow(
+            draft: AppSettingsDraft(launchAtLogin: false, shortcut: .default, displayMode: .text),
+            onSave: { _ in
+                saveCount += 1
+                return String(repeating: "Could not restore the previous configuration. Check Login Items in System Settings. ", count: 3)
+            },
+            onCancel: {}
+        )
+        window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        // Process SwiftUI layout and its deferred geometry callback in the same
+        // real hosted window, rather than measuring separate static forms.
+        window.contentView?.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        let initialHeight = window.frame.height
+        let initialTop = window.frame.maxY
+        let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: UInt16(kVK_Return)
+        )!
+        _ = window.performKeyEquivalent(with: event)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        window.contentView?.layoutSubtreeIfNeeded()
+        expect(saveCount == 1, "Return must invoke the real hosted Settings Save action.")
+        expect(window.frame.height > initialHeight, "A live validation error must enlarge the actual Settings window.")
+        expect(abs(window.frame.maxY - initialTop) < 1, "Growing Settings must preserve its title-bar position.")
+        if let content = window.contentView {
+            expect(content.frame.height >= content.fittingSize.height - 1, "The window must fit the entire error and its Save/Cancel controls.")
+        }
+    }
+
+    @MainActor
+    private static func testPendingLoginRegistrationCanBeDisabled() {
+        let service = MockLoginItemService(status: .requiresApproval)
+        expect(LoginItemManager.isEnabled(service: service), "Pending approval must remain a requested login registration.")
+        tryOrFail("Turning off a pending login registration should succeed.") {
+            try LoginItemManager.setEnabled(false, service: service)
+        }
+        expect(service.unregisterCalls == 1 && service.status == .notRegistered, "Off must unregister a pending request.")
+        tryOrFail("Turning off again should be harmless.") { try LoginItemManager.setEnabled(false, service: service) }
+        expect(service.unregisterCalls == 1, "An already absent registration needs no service mutation.")
+    }
+
+    @MainActor
+    private static func testTrackerMotionAfterActivationWaitsForFreshPath() {
+        verifyActivationMotion(config: .default)
+        var equalIntervals = AppConfig.default
+        equalIntervals.motionPollInterval = equalIntervals.activePollInterval
+        verifyActivationMotion(config: equalIntervals)
+    }
+
+    @MainActor
+    private static func verifyActivationMotion(config: AppConfig) {
+        let harness = TrackerHarness.showing(tmp42, config: config)
+        harness.finder.isFinderFrontmost = false
+        harness.tracker.poll()
+        harness.finder.isFinderFrontmost = true
+        harness.tracker.poll()
+        let count = harness.updates.count
+        harness.tracker.handleAccessibilityNotification(kAXMovedNotification)
+        harness.finder.window?.frame.origin.x += 40
+        harness.tracker.poll()
+        expect(harness.updates.count == count, "Motion while awaiting activation freshness must not resurrect the old path.")
+        harness.finder.finishRead(with: users42, after: 0.02)
+        expect(harness.updates.count == count, "A fresh read arriving mid-drag must not reveal the bar before settle.")
+        harness.tracker.poll()
+        expect(harness.updates.count == count, "Neither timer rescheduling nor a same-frame poll may reveal the bar mid-drag.")
+        harness.tracker.finishMotionHiding()
+        guard case .snapshot(let snapshot) = harness.updates.last else {
+            expect(false, "Fresh activation state should recover after motion.")
+            return
+        }
+        expect(snapshot.state == users42, "Only the post-activation path may return.")
+        harness.tracker.stop()
+    }
+
+    @MainActor
+    private static func testTrackerHeldOverlayRestoresFreshnessAfterEditing() {
+        let harness = TrackerHarness.showing(tmp42)
+        harness.tracker.shouldRemainVisible = { true }
+        harness.finder.isFinderFrontmost = false
+        harness.tracker.poll()
+        harness.tracker.shouldRemainVisible = { false }
+        harness.finder.isFinderFrontmost = true
+        harness.tracker.poll()
+        let count = harness.updates.count
+        harness.finder.finishRead(with: tmp42, after: 0.02)
+        expect(harness.updates.count == count + 1 && harness.updates.last == shown(tmp42), "Returning from editing must re-emit an identical fresh path once for ordering and expiry.")
+        harness.tracker.poll()
+        expect(harness.updates.count == count + 1, "Freshness restoration must not emit duplicate snapshots each poll.")
+        harness.finder.advance(0.2)
+        harness.tracker.poll()
+        harness.finder.advance(2)
+        harness.tracker.poll()
+        expect(harness.updates.last == shown(nil), "A stuck read after returning from editing must still expire the visible path.")
+        harness.tracker.stop()
+    }
+
+    @MainActor
+    private static func testTrackerUnavailableSnapshotKeepsItsWindowNumber() {
+        let harness = TrackerHarness()
+        harness.tracker.start()
+        harness.finder.quickLookVisible = true
+        harness.finder.finishRead(with: tmp42)
+        harness.finder.advance(1)
+        harness.finder.quickLookVisible = false
+        harness.tracker.poll()
+        harness.finder.finishRead(with: nil)
+        expect(harness.updates.last == shown(nil), "Quick Look recovery can first emit an unavailable path, still paired to window 42.")
+        guard case .snapshot(let snapshot) = harness.updates.last else {
+            expect(false, "Expected an unavailable snapshot.")
+            return
+        }
+        expect(snapshot.windowNumber == 42, "Unavailable state must not discard the CG window's ordering identity.")
+        harness.tracker.stop()
+    }
+
+    @MainActor
+    private static func testTrackerMotionSettleRechecksFocusAndExpiration() {
+        let harness = TrackerHarness.showing(tmp42)
+        harness.tracker.handleAccessibilityNotification(kAXResizedNotification)
+        expect(harness.updates.last == .temporarilyHiddenForMotion, "A visible bar should hide during motion.")
+        harness.finder.isFinderFrontmost = false
+        harness.tracker.finishMotionHiding()
+        expect(harness.updates.last != shown(tmp42), "A settle callback must recheck focus before showing the bar.")
+        harness.tracker.stop()
+
+        let expired = TrackerHarness.showing(tmp42)
+        expired.finder.advance(0.15)
+        expired.tracker.poll()
+        expired.tracker.handleAccessibilityNotification(kAXResizedNotification)
+        expired.finder.advance(2)
+        expired.tracker.finishMotionHiding()
+        expect(expired.updates.last != shown(tmp42), "Motion cannot keep an expired path editable.")
+        expired.tracker.stop()
+    }
+
+    @MainActor
+    private static func testTrackerQuickLookCancelsHotKeyAndRecovers() {
+        let harness = TrackerHarness.showing(tmp42)
+        var results: [FinderWindowSnapshot?] = []
+        harness.tracker.requestFreshSnapshot { results.append($0) }
+        harness.finder.quickLookVisible = true
+        harness.finder.finishRead(with: tmp42)
+        expect(results == [nil], "Quick Look opening during a hotkey read must cancel editing.")
+        expect(harness.updates.last == .hiddenForQuickLook, "The completion must not reopen the suppressed panel.")
+        harness.finder.quickLookVisible = false
+        harness.tracker.requestFreshSnapshot { results.append($0) }
+        harness.finder.finishRead(with: users42)
+        expect(results.last!?.state == users42, "A new hotkey after dismissing Quick Look must work.")
+        harness.tracker.stop()
+    }
+
+    @MainActor
+    private static func testTrackerInstallerClassificationSuppressesPollAndHotKey() {
+        var installer = tmp42
+        installer.isDragToInstallVolume = true
+        let harness = TrackerHarness.showing(installer)
+        expect(harness.updates.isEmpty, "Installer classification carried by a read must suppress the first snapshot.")
+        var results: [FinderWindowSnapshot?] = []
+        harness.tracker.requestFreshSnapshot { results.append($0) }
+        for _ in 0..<2 where harness.finder.pendingReadCount > 0 {
+            harness.finder.finishRead(with: installer)
+        }
+        expect(results == [nil], "The hotkey must not resurrect an installer bar.")
+        harness.finder.advance(0.2)
+        harness.tracker.poll()
+        harness.finder.finishRead(with: users42)
+        expect(harness.updates.last == shown(users42), "Navigating away from the installer must restore ordinary tracking.")
+        harness.tracker.stop()
+    }
+
+    private static func testInstallerClassificationRunsOffMainAndIsCached() async {
+        let probe = InstallerClassificationProbe()
+        let environment = SystemFinderTrackingEnvironment(
+            automationService: ConstantFinderAutomationService(state: tmp42),
+            classifyInstaller: { probe.classify($0) }
+        )
+        for _ in 0..<3 {
+            let state = await withCheckedContinuation { continuation in
+                environment.readFinderState { continuation.resume(returning: $0) }
+            }
+            expect(state?.isDragToInstallVolume == true, "Background classification must travel with the exact Finder read.")
+        }
+        expect(probe.callCount == 1 && !probe.wasCalledOnMain, "Unchanged paths must reuse background classification, with no main-thread disk work.")
+    }
+
+    private static func testSlowInstallerClassificationCachesFromCompletion() async {
+        let clock = ClassificationTestClock()
+        let probe = InstallerClassificationProbe()
+        let service = ConstantFinderAutomationService(state: tmp42)
+        let environment = SystemFinderTrackingEnvironment(
+            automationService: service,
+            classifyInstaller: { path in
+                clock.advance(6)
+                return probe.classify(path)
+            },
+            uptime: { clock.now }
+        )
+        func read() async -> FinderState? {
+            await withCheckedContinuation { continuation in
+                environment.readFinderState { continuation.resume(returning: $0) }
+            }
+        }
+        _ = await read()
+        _ = await read()
+        expect(probe.callCount == 1, "A six-second classification must still be cached immediately after completion.")
+        clock.advance(4.9)
+        _ = await read()
+        expect(probe.callCount == 1, "Classification must remain cached for five seconds after completion.")
+        clock.advance(0.2)
+        _ = await read()
+        expect(probe.callCount == 2, "Classification must refresh after the completion-based TTL expires.")
+        service.state = users42
+        let changed = await read()
+        expect(probe.callCount == 3 && changed?.resolvedPath == users42.resolvedPath, "A different path must immediately invalidate classification.")
+    }
+
+    private static func testMalformedConfigFieldPreservesOtherPreferences() {
+        let config = tryOrFail("Malformed fields should fall back independently.") {
+            try JSONDecoder().decode(AppConfig.self, from: Data(#"{"displayMode":"crumbs","launchAtLogin":"oops","verticalGap":17,"shortcut":"control+l","horizontalInset":13}"#.utf8))
+        }
+        expect(config.displayMode == .text && !config.launchAtLogin, "Only malformed fields should use defaults.")
+        let restored = tryOrFail("Saving the recovered configuration should preserve valid values.") {
+            try JSONDecoder().decode(AppConfig.self, from: JSONEncoder().encode(config))
+        }
+        expect(restored.verticalGap == 17 && restored.horizontalInset == 13, "A subsequent save must not erase valid layout preferences.")
+        expect(restored.shortcut == decodeShortcut(from: #""control+l""#), "A malformed field must not reset a valid shortcut.")
     }
 
     @MainActor
@@ -1015,7 +1350,7 @@ struct EditingFocusRegressionTests {
     private static let users43 = FinderState(displayedPath: "/Users", resolvedPath: "/Users", windowID: 43)
 
     private static func shown(_ state: FinderState?) -> FinderWindowTrackerUpdate {
-        .snapshot(FinderWindowSnapshot(frame: ScriptedFinderEnvironment.frame, state: state))
+        .snapshot(FinderWindowSnapshot(frame: ScriptedFinderEnvironment.frame, state: state, windowNumber: state?.windowID ?? 42))
     }
 
     @MainActor
@@ -1665,6 +2000,7 @@ private final class ScriptedFinderEnvironment: FinderTrackingEnvironment {
 
     var now = Date(timeIntervalSinceReferenceDate: 1_000)
     var isFinderFrontmost = true
+    var quickLookVisible = false
     var window: FinderCGWindowInfo? = ScriptedFinderEnvironment.window(number: 42)
     let observesSystemEvents = false
     private(set) var startedReadCount = 0
@@ -1704,16 +2040,17 @@ private final class TrackerHarness {
     let tracker: FinderWindowTracker
     private(set) var updates: [FinderWindowTrackerUpdate] = []
 
-    init() {
-        tracker = FinderWindowTracker(config: .default, environment: finder)
+    init(config: AppConfig = .default) {
+        let finder = self.finder
+        tracker = FinderWindowTracker(config: config, environment: finder, quickLookIsVisible: { finder.quickLookVisible })
         tracker.onUpdate = { [unowned self] update in
             self.updates.append(update)
         }
     }
 
     /// Starts tracking window 42 and lets its first read finish.
-    static func showing(_ state: FinderState) -> TrackerHarness {
-        let harness = TrackerHarness()
+    static func showing(_ state: FinderState, config: AppConfig = .default) -> TrackerHarness {
+        let harness = TrackerHarness(config: config)
         harness.tracker.start()
         harness.finder.finishRead(with: state, after: 0.05)
         return harness
@@ -1731,6 +2068,48 @@ private final class TrackerHarness {
     func applyLastSnapshot(to viewModel: PathBarViewModel) {
         guard case .snapshot(let snapshot) = updates.last else { return }
         viewModel.update(state: snapshot.state, displayMode: .text)
+    }
+}
+
+private final class MockLoginItemService: LoginItemServing {
+    var status: SMAppService.Status
+    var unregisterCalls = 0
+    init(status: SMAppService.Status) { self.status = status }
+    func register() throws { status = .enabled }
+    func unregister() throws { unregisterCalls += 1; status = .notRegistered }
+}
+
+private final class ConstantFinderAutomationService: FinderAutomationServing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: FinderState
+    var state: FinderState {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
+    init(state: FinderState) { self.current = state }
+    func currentState() -> FinderState? { state }
+    func navigate(to path: String, windowID: Int?) -> Bool { true }
+}
+
+private final class ClassificationTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var time: TimeInterval = 0
+    var now: TimeInterval { lock.withLock { time } }
+    func advance(_ duration: TimeInterval) { lock.withLock { time += duration } }
+}
+
+private final class InstallerClassificationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private var mainThreadCall = false
+    var callCount: Int { lock.withLock { calls } }
+    var wasCalledOnMain: Bool { lock.withLock { mainThreadCall } }
+    func classify(_ path: String) -> Bool {
+        lock.withLock {
+            calls += 1
+            mainThreadCall = mainThreadCall || Thread.isMainThread
+        }
+        return true
     }
 }
 

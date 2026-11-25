@@ -143,19 +143,8 @@ final class AppCoordinator {
 
     private func showWelcomeIfNeeded() {
         let hasSeenWelcome = UserDefaults.standard.bool(forKey: hasSeenWelcomeKey)
-        guard !hasSeenWelcome || !arePermissionsGranted else { return }
+        guard !hasSeenWelcome else { return }
         showWelcome()
-    }
-
-    private var arePermissionsGranted: Bool {
-        guard AccessibilityPermissionManager.isTrusted else { return false }
-
-        switch AutomationPermissionManager.finderAutomationState() {
-        case .granted, .unknown:
-            return true
-        case .denied, .notDetermined:
-            return false
-        }
     }
 
     private func beginEditingFromHotKey() {

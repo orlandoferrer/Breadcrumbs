@@ -7,9 +7,8 @@ import SwiftUI
 /// SwiftUI renders the panel contents, but AppKit owns window-level behavior
 /// such as focus, z-order, Spaces, and global click dismissal.
 final class OverlayWindowController {
-    private let panel: FocusablePanel
+    let panel: FocusablePanel
     private let viewModel: PathBarViewModel
-    private let panelLevel = NSWindow.Level.statusBar
     private var visibilityHoldUntil: Date?
     private var outsideClickMonitor: Any?
 
@@ -22,14 +21,17 @@ final class OverlayWindowController {
             backing: .buffered,
             defer: false
         )
-        panel.isFloatingPanel = true
-        panel.level = panelLevel
+        // A status-bar/floating level stays above other apps during a live
+        // window drag, before activation notifications arrive. Use ordinary
+        // window stacking and order immediately above the tracked Finder window.
+        panel.isFloatingPanel = false
+        panel.level = .normal
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
         panel.collectionBehavior = [.moveToActiveSpace, .ignoresCycle]
         panel.hidesOnDeactivate = false
-        panel.appearance = Self.pinnedAppearance()
+        panel.appearance = nil
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovable = false
@@ -50,7 +52,11 @@ final class OverlayWindowController {
     func update(with snapshot: FinderWindowSnapshot, config: AppConfig) {
         let frame = frame(for: snapshot.frame, config: config)
         panel.setFrame(frame, display: true)
-        panel.orderFrontRegardless()
+        if let finderWindowNumber = snapshot.windowNumber {
+            panel.order(.above, relativeTo: finderWindowNumber)
+        } else {
+            panel.orderFront(nil)
+        }
     }
 
     func hide() {
@@ -156,17 +162,11 @@ final class OverlayWindowController {
             viewModel: viewModel
         )
     }
-
-    private static func pinnedAppearance() -> NSAppearance? {
-        let baseAppearance = NSApp.effectiveAppearance
-        let name = baseAppearance.bestMatch(from: [.darkAqua, .aqua]) ?? .aqua
-        return NSAppearance(named: name)
-    }
 }
 
 /// A borderless panel that can accept text input without becoming a normal main
 /// application window.
-private final class FocusablePanel: NSPanel {
+final class FocusablePanel: NSPanel {
     var onResignKey: (() -> Void)?
     var onMouseDown: (() -> Void)?
 

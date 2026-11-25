@@ -8,6 +8,8 @@ struct FinderState: Equatable {
     var displayedPath: String
     var resolvedPath: String
     var windowID: Int
+    // Classified alongside the background Finder read, never during frame polls.
+    var isDragToInstallVolume = false
 }
 
 /// A testable boundary around all commands sent to Finder via Apple Events.
